@@ -1,0 +1,20 @@
+CREATE TABLE "laundry_deliveries" (
+  "id"                    serial PRIMARY KEY,
+  "property_id"           integer NOT NULL,
+  "date"                  text NOT NULL,
+  "delivered_by_id"       integer NOT NULL,
+  "delivered_at"          timestamp with time zone NOT NULL DEFAULT now(),
+  "location"              text NOT NULL,
+  "delivered_to_id"       integer NOT NULL,
+  "shower_towels"         smallint NOT NULL DEFAULT 0,
+  "hand_towels"           smallint NOT NULL DEFAULT 0,
+  "sheet_sets"            smallint NOT NULL DEFAULT 0,
+  "foot_towels"           smallint NOT NULL DEFAULT 0,
+  "notes"                 text,
+  "processed_by_id"       integer,
+  "processed_at"          timestamp with time zone,
+  "distribution_location" text,
+  "status"                text,
+  "created_at"            timestamp with time zone NOT NULL DEFAULT now(),
+  "updated_at"            timestamp with time zone NOT NULL DEFAULT now()
+);

@@ -1,0 +1,16 @@
+hacer turnos y horarios, y que aparezcan los compañeros en algun sitio
+hacer menu de incidencias de habitaciones
+hacer buzon de tareas
+pasar registros de inventario, de higiene y de piscina
+hacer lugar para pasar documentación
+(quitas la otra app)
+
+faltan documentos de envio por correo al cliente
+faltan plantillas de facturas
+faltan algunas integraciones menores
+falta el testing para los empleados
+
+modulo de firmas para dejar de usar wacom
+cargar precios a jumbo
+auto-generación de facturas para canales de venta
+integración con whatsapp

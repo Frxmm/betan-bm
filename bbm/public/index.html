@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Betania Booking Manager</title>
+  <link rel="icon" href="img/logo.png" type="image/png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+  <!-- ─── SIDEBAR ─────────────────────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <div class="sidebar-logo">
+      Betania
+      <span>Booking Manager</span>
+    </div>
+    <nav><!-- se genera en app.js --></nav>
+  </aside>
+
+  <!-- ─── MAIN ─────────────────────────────────────────────────────────────── -->
+  <div id="main">
+    <header id="topbar">
+      <h1 id="page-title">Dashboard</h1>
+
+      <!-- Búsqueda global -->
+      <div id="gsearch-wrap">
+        <span class="gsearch-icon">⌕</span>
+        <input id="gsearch-input" type="search" autocomplete="off"
+               placeholder="Buscar reserva, huésped o habitación…">
+        <div id="gsearch-dropdown" hidden></div>
+      </div>
+
+      <span class="topbar-date" id="topbar-date"></span>
+    </header>
+    <main id="content"></main>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/js/global-search.js"></script>
+</body>
+</html>

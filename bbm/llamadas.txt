@@ -1,0 +1,17 @@
+POST https://0t6ab-api-premium.frontdeskmaster.com/HSOPService.svc/properties/9713/pricingInfo?expand=Prices(CurrencyId)
+
+[{"StartDate":"/Date(1782777600000)/","EndDate":"/Date(1782777600000)/","RoomUseId":4,"RateId":27,"id":"HSO.data.model.PricingInfo-1","Id":11549,"Prices":[{"Id":14018,"NumGuests":0,"CurrencyId":423,"id":"HSO.data.model.PriceInfo-2","DailyPrices":[0,0,101,0,0,0,0],"Prices":""}]}]
+
+
+POST https://0t6ab-api-premium.frontdeskmaster.com/HSOPService.svc/properties/9713/availability
+
+[{"Id":null,"Href":"","Date":"/Date(1782604800000)/","Availability":2,"RoomUseId":4,"AvailabilityLevel":1,"CreateInfo":"","Availabilities":"","AvailabilityData":""}]
+
+POST https://0t6ab-api-premium.frontdeskmaster.com/HSOPService.svc/properties/9713/setAvailability?desc=Price%20Matrix%20-%20Save%20Changes
+
+{"CMAvailabilities":[{"Date":"/Date(1782777600000)/","RoomUseId":4,"RateId":27,"TypeMask":2,"PriceChanged":true,"ClosedRoom":null}],"FDMAvailabilities":[{"Date":"/Date(1782777600000)/","RoomUseId":4}]}
+
+POST https://api-reports-premium.frontdeskmaster.com/HSOPService.svc/properties/9713/setAvailabilityRange?runAsync=true
+
+
+{"ProfileId":-1,"RangeDate":3}

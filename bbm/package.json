@@ -1,0 +1,58 @@
+{
+  "name": "betan-bm",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot run index.ts",
+    "start": "bun run index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "bun run src/db/seed.ts",
+    "db:studio": "drizzle-kit studio",
+    "build": "bun build --compile --target=bun-linux-x64 ./index.ts --outfile ./dist/betan-bm",
+    "deploy:test": "bash scripts/deploy.sh test",
+    "deploy:prod": "bash scripts/deploy.sh prod",
+    "db:migrate:test": "bash scripts/deploy.sh migrate test",
+    "db:migrate:prod": "bash scripts/deploy.sh migrate prod",
+    "tenant:create": "bun scripts/create-tenant.ts",
+    "tenant:export": "bun scripts/export-tenant.ts",
+    "user:create": "bun scripts/create-user.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/d3-geo": "^3.1.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/topojson-client": "^3.1.5",
+    "drizzle-kit": "^0.31.10"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^2.1.186",
+    "@anthropic-ai/sdk": "^0.111.0",
+    "@hono/zod-validator": "^0.8.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "csv-parse": "^7.0.0",
+    "d3-geo": "^3.1.1",
+    "drizzle-orm": "^0.45.2",
+    "fflate": "^0.8.3",
+    "hono": "^4.12.25",
+    "pdf-lib": "^1.17.1",
+    "postgres": "^3.4.9",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.18.0",
+    "recharts": "^3.8.1",
+    "resend": "^6.14.0",
+    "stripe": "^22.3.0",
+    "topojson-client": "^3.1.0",
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
+  }
+}

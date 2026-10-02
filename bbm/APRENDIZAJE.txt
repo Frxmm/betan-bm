@@ -1,0 +1,612 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║          BETANIA BOOKING MANAGER — GUÍA DE APRENDIZAJE SOBRE LA MARCHA      ║
+║                     Stack: Bun · Hono · Drizzle · PostgreSQL                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Este documento se va actualizando a medida que construimos el proyecto.
+Cada sección explica el QUÉ y el POR QUÉ de cada decisión técnica.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 1 — EL RUNTIME: BUN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+¿Qué es un runtime?
+  Un runtime es el entorno que ejecuta tu código. Para JavaScript/TypeScript,
+  el runtime más conocido es Node.js. Bun es una alternativa más rápida.
+
+¿Por qué Bun en lugar de Node?
+  Node.js interpreta JavaScript usando el motor V8 de Chrome.
+  Bun usa JavaScriptCore (el motor de Safari) y está escrito en Zig,
+  un lenguaje de bajo nivel más eficiente que C++ para este tipo de tareas.
+
+  Resultado práctico:
+  - Bun arranca 3-4x más rápido que Node
+  - Bun ejecuta TypeScript directamente, sin necesidad de compilarlo primero
+  - Bun incluye: gestor de paquetes (como npm), test runner, bundler
+    Todo en un único ejecutable, sin instalar nada más.
+
+¿Qué significa "ejecutar TypeScript directamente"?
+  Con Node necesitarías:
+    1. Escribir código TypeScript (.ts)
+    2. Compilarlo a JavaScript (.js) con tsc
+    3. Ejecutar el .js con node
+
+  Con Bun:
+    1. Escribir código TypeScript (.ts)
+    2. Ejecutarlo directamente: bun run index.ts
+
+  Bun hace el paso 2 internamente y al vuelo, sin generar archivos .js.
+
+Comandos básicos de Bun:
+  bun init              → crea un proyecto nuevo (genera package.json, tsconfig.json)
+  bun add <paquete>     → instala una dependencia (equivalente a npm install)
+  bun add -d <paquete>  → instala como dev dependency (solo para desarrollo)
+  bun run <archivo.ts>  → ejecuta un archivo TypeScript
+  bun run dev           → ejecuta el script "dev" definido en package.json
+  bun --watch run ...   → reinicia automáticamente cuando cambias un archivo
+
+El archivo package.json:
+  Define tu proyecto: nombre, versión, dependencias.
+  Las "dependencies" son las que necesita tu app en producción.
+  Las "devDependencies" son herramientas que solo usas al desarrollar
+  (por ejemplo: drizzle-kit que genera migraciones, pero no corre en producción).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 2 — EL LENGUAJE: TYPESCRIPT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TypeScript es JavaScript con tipos.
+
+  JavaScript normal:
+    function calcularTotal(noches, precio) {
+      return noches * precio;   // ¿qué pasa si alguien pasa un texto?
+    }
+
+  TypeScript:
+    function calcularTotal(noches: number, precio: number): number {
+      return noches * precio;   // el editor te avisa si pasas un texto
+    }
+
+¿Por qué importa en un PMS?
+  Un PMS maneja dinero, fechas y estados críticos. Un error de tipos
+  (confundir un ID de reserva con un ID de habitación, por ejemplo)
+  puede ser costoso. TypeScript lo detecta ANTES de ejecutar el código.
+
+Conceptos de TypeScript que verás en este proyecto:
+
+  INTERFACE / TYPE — define la forma de un objeto:
+    type Reserva = {
+      id: number
+      checkIn: Date
+      checkOut: Date
+      total: number
+    }
+
+  ENUM — valores predefinidos:
+    type EstadoReserva = 'confirmada' | 'checkin' | 'checkout' | 'cancelada'
+
+  GENÉRICOS (<T>) — código reutilizable para cualquier tipo:
+    type Respuesta<T> = {
+      data: T
+      error: string | null
+    }
+    // Respuesta<Reserva>, Respuesta<Habitacion>, etc.
+
+  NULLABILITY — control de valores nulos:
+    let precio: number        // nunca puede ser null
+    let descuento: number | null   // puede ser null explícitamente
+
+El archivo tsconfig.json:
+  Configura cómo TypeScript interpreta tu código.
+  Bun lo genera automáticamente con valores razonables.
+  No necesitas tocarlo al principio.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 3 — EL FRAMEWORK WEB: HONO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+¿Qué es un framework web?
+  Es una librería que te da la estructura para recibir peticiones HTTP
+  y devolver respuestas. Sin un framework, tendrías que gestionar
+  sockets TCP a mano — inviable.
+
+¿Qué es HTTP?
+  El protocolo que usan los navegadores y las apps para comunicarse
+  con el servidor. Cada petición tiene:
+    - METHOD:  GET (leer), POST (crear), PUT/PATCH (modificar), DELETE (borrar)
+    - PATH:    /reservas, /reservas/123, /habitaciones
+    - HEADERS: metadatos (autenticación, tipo de contenido, etc.)
+    - BODY:    datos que envías (en JSON normalmente)
+
+¿Por qué Hono en lugar de Express?
+  Express es el framework Node más conocido, pero tiene 15 años y no fue
+  diseñado para TypeScript. Hono es moderno, minimalista y tiene tipos
+  perfectos desde el primer momento.
+
+  Express:
+    app.get('/reservas/:id', (req, res) => {
+      const id = req.params.id  // tipo: any — TypeScript no sabe qué es
+    })
+
+  Hono:
+    app.get('/reservas/:id', (c) => {
+      const id = c.req.param('id')  // tipo: string — TypeScript lo sabe
+    })
+
+  Además, Hono es 5-10x más rápido que Express en benchmarks.
+
+Conceptos clave de Hono:
+
+  APP — el servidor:
+    import { Hono } from 'hono'
+    const app = new Hono()
+
+  RUTAS — qué hacer cuando llega una petición:
+    app.get('/reservas', handler)        // GET /reservas → listar reservas
+    app.post('/reservas', handler)       // POST /reservas → crear reserva
+    app.get('/reservas/:id', handler)    // GET /reservas/123 → ver reserva 123
+    app.patch('/reservas/:id', handler)  // PATCH /reservas/123 → modificar
+    app.delete('/reservas/:id', handler) // DELETE /reservas/123 → borrar
+
+  HANDLER (controlador) — la función que procesa la petición:
+    app.get('/reservas/:id', async (c) => {
+      const id = c.req.param('id')           // lee parámetro de la URL
+      const body = await c.req.json()        // lee el body JSON
+      return c.json({ id, nombre: 'test' })  // responde con JSON
+    })
+
+  CONTEXT (c) — el objeto que une petición y respuesta:
+    c.req          → la petición que llegó
+    c.json(data)   → responde con JSON (status 200 por defecto)
+    c.json(data, 404)  → responde con JSON y status 404
+    c.text('ok')   → responde con texto plano
+
+  MIDDLEWARE — código que se ejecuta ANTES de llegar al handler:
+    app.use('*', logger())     // loguea todas las peticiones
+    app.use('/api/*', auth())  // verifica auth solo en rutas /api/
+
+  ROUTER — agrupa rutas relacionadas:
+    const reservas = new Hono()
+    reservas.get('/', listarReservas)
+    reservas.post('/', crearReserva)
+    app.route('/reservas', reservas)   // monta el grupo en /reservas
+
+  Exportar el servidor para Bun:
+    export default app
+    // Bun sabe que si exportas un objeto con .fetch, es un servidor HTTP
+
+  Arrancar en un puerto específico:
+    export default {
+      port: 3000,
+      fetch: app.fetch,
+    }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 4 — VALIDACIÓN DE DATOS: ZOD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+¿Por qué validar?
+  TypeScript solo comprueba tipos en tiempo de compilación (cuando escribes
+  el código). En tiempo de ejecución, si alguien te manda un JSON con
+  campos erróneos, TypeScript no puede protegerte. Zod sí.
+
+  Sin validación:
+    const body = await c.req.json()
+    // body.checkIn podría ser undefined, null, "hola", 42... cualquier cosa
+
+  Con Zod:
+    const schema = z.object({
+      checkIn: z.string().date(),    // debe ser una fecha en formato YYYY-MM-DD
+      noches: z.number().int().min(1),
+    })
+    const result = schema.parse(body)  // lanza error si no cumple el schema
+
+Zod también INFIERE tipos TypeScript:
+    const crearReservaSchema = z.object({
+      guestId: z.number().int(),
+      habitacionId: z.number().int(),
+      checkIn: z.string().date(),
+      checkOut: z.string().date(),
+    })
+
+    type CrearReservaInput = z.infer<typeof crearReservaSchema>
+    // Obtienes el tipo TypeScript gratis, sin escribirlo dos veces
+
+@hono/zod-validator integra Zod con Hono:
+    import { zValidator } from '@hono/zod-validator'
+
+    app.post('/reservas',
+      zValidator('json', crearReservaSchema),  // valida el body automáticamente
+      async (c) => {
+        const data = c.req.valid('json')  // data tiene tipo inferido por Zod
+        // Si el body no era válido, Hono ya respondió 400 antes de llegar aquí
+      }
+    )
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 5 — LA BASE DE DATOS: POSTGRESQL + DRIZZLE ORM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+¿Qué es PostgreSQL?
+  Un sistema de gestión de bases de datos relacional (RDBMS).
+  Los datos se guardan en tablas (como Excel pero con relaciones entre ellas).
+  Se comunica con tu app mediante consultas SQL.
+
+¿Por qué no guardamos los datos en archivos JSON?
+  Los archivos no soportan búsquedas eficientes, transacciones (operaciones
+  atómicas "todo o nada"), concurrencia segura ni integridad referencial.
+  Para un PMS donde el dinero y las reservas deben ser exactos: PostgreSQL.
+
+¿Qué es un ORM?
+  ORM = Object-Relational Mapper.
+  Traduce entre el mundo de los objetos TypeScript y el mundo de las
+  tablas SQL, para que no tengas que escribir SQL a mano en todos lados.
+
+¿Por qué Drizzle en lugar de otros ORMs?
+  La mayoría de ORMs (Sequelize, TypeORM, Prisma) ocultan el SQL
+  detrás de abstracciones propias. Cuando necesitas una query compleja,
+  la abstracción se rompe y tienes que saltar a SQL raw perdiendo los tipos.
+
+  Drizzle es diferente: su API ES SQL, escrita en TypeScript.
+  Si sabes SQL, ya sabes Drizzle. Si no sabes SQL, aprenderás ambos a la vez.
+
+CONCEPTOS FUNDAMENTALES DE SQL que verás en Drizzle:
+
+  SELECT — leer datos:
+    SQL:     SELECT * FROM reservations WHERE status = 'confirmed'
+    Drizzle: db.select().from(reservations).where(eq(reservations.status, 'confirmed'))
+
+  INSERT — insertar datos:
+    SQL:     INSERT INTO reservations (guest_id, check_in) VALUES (1, '2026-07-01')
+    Drizzle: db.insert(reservations).values({ guestId: 1, checkIn: '2026-07-01' })
+
+  UPDATE — modificar datos:
+    SQL:     UPDATE reservations SET status = 'checked_in' WHERE id = 123
+    Drizzle: db.update(reservations).set({ status: 'checked_in' }).where(eq(reservations.id, 123))
+
+  DELETE — borrar datos:
+    SQL:     DELETE FROM reservations WHERE id = 123
+    Drizzle: db.delete(reservations).where(eq(reservations.id, 123))
+
+  JOIN — combinar tablas:
+    SQL:     SELECT r.*, g.first_name FROM reservations r JOIN guests g ON r.guest_id = g.id
+    Drizzle: db.select().from(reservations).leftJoin(guests, eq(reservations.guestId, guests.id))
+
+CÓMO SE DEFINE UN SCHEMA EN DRIZZLE:
+
+  En vez del archivo .sql que tenemos en _intermedios,
+  Drizzle define las tablas en TypeScript:
+
+  // src/db/schema/guests.ts
+  import { pgTable, serial, text, boolean, timestamp } from 'drizzle-orm/pg-core'
+
+  export const guests = pgTable('guests', {
+    id:        serial('id').primaryKey(),
+    firstName: text('first_name').notNull(),
+    lastName:  text('last_name').notNull(),
+    email:     text('email'),
+    isVip:     boolean('is_vip').notNull().default(false),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  })
+
+  // Drizzle infiere automáticamente el tipo TypeScript:
+  // type Guest = typeof guests.$inferSelect
+  // → { id: number, firstName: string, lastName: string, email: string | null, isVip: boolean, createdAt: Date }
+
+TIPOS DE COLUMNA más usados en Drizzle + PostgreSQL:
+  serial('col')           → entero autoincremental (ID)
+  integer('col')          → número entero
+  numeric('col', {p,s})   → decimal (p=precisión, s=escala). Para dinero: numeric('total', {precision:10, scale:2})
+  text('col')             → texto de longitud variable
+  boolean('col')          → true/false
+  date('col')             → solo fecha (2026-06-17)
+  timestamp('col')        → fecha + hora
+  timestamptz('col')      → fecha + hora + zona horaria (mejor para producción)
+  jsonb('col')            → JSON en PostgreSQL (con índices y búsquedas)
+  pgEnum('nombre', [...]) → enum de PostgreSQL
+
+RELACIONES entre tablas:
+  Las tablas se relacionan mediante claves foráneas (foreign keys).
+  Una reserva tiene un guest_id que apunta a la tabla guests.
+
+  En Drizzle se define así:
+    guestId: integer('guest_id').notNull().references(() => guests.id)
+
+  Esto garantiza integridad: no puedes crear una reserva con un guest_id
+  que no exista en la tabla guests. PostgreSQL lo rechaza.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 6 — MIGRACIONES: DRIZZLE-KIT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+¿Qué es una migración?
+  Cuando cambias la estructura de tu base de datos (añadir una columna,
+  crear una tabla, cambiar un tipo), necesitas aplicar ese cambio a
+  la DB sin perder los datos existentes. Eso es una migración.
+
+  Sin migraciones: borras la DB y la recreas (pierdes todos los datos).
+  Con migraciones: aplicas cambios incrementales de forma segura.
+
+Drizzle-Kit es la herramienta de CLI que acompaña a Drizzle ORM:
+
+  bunx drizzle-kit generate
+    → Compara tu schema TypeScript con el estado actual de la DB
+    → Genera un archivo SQL con los cambios necesarios
+    → Ejemplo: si añades una columna 'phone' al schema,
+      genera: ALTER TABLE guests ADD COLUMN phone TEXT;
+
+  bunx drizzle-kit migrate
+    → Aplica las migraciones pendientes a la base de datos
+
+  bunx drizzle-kit studio
+    → Abre una interfaz web para explorar y editar los datos de tu DB
+
+El archivo drizzle.config.ts:
+  Le dice a drizzle-kit dónde está tu schema y cómo conectarse a la DB.
+  Lo veremos en detalle en el Capítulo 8.
+
+Estructura de archivos de migraciones:
+  drizzle/
+    0000_initial_schema.sql    ← primera migración (creación de tablas)
+    0001_add_phone_to_guests.sql  ← segunda migración
+    0002_reservation_status_enum.sql
+    meta/
+      _journal.json             ← registro de qué migraciones se han aplicado
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 7 — ESTRUCTURA DEL PROYECTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+betania-booking-manager/
+│
+├── src/
+│   ├── db/
+│   │   ├── schema/             ← definición de tablas en TypeScript (Drizzle)
+│   │   │   ├── guests.ts
+│   │   │   ├── rooms.ts
+│   │   │   ├── reservations.ts
+│   │   │   └── index.ts        ← re-exporta todos los schemas
+│   │   ├── index.ts            ← crea y exporta la conexión a PostgreSQL
+│   │   └── seed.ts             ← datos iniciales para desarrollo
+│   │
+│   ├── routes/                 ← rutas HTTP organizadas por entidad
+│   │   ├── reservations.ts     ← GET/POST/PATCH /reservations
+│   │   ├── guests.ts
+│   │   ├── rooms.ts
+│   │   └── ...
+│   │
+│   ├── middleware/             ← código que se ejecuta en todas las peticiones
+│   │   ├── auth.ts             ← verificación de sesión/JWT
+│   │   └── logger.ts
+│   │
+│   └── lib/                   ← utilidades compartidas
+│       ├── errors.ts           ← manejo centralizado de errores
+│       └── env.ts              ← variables de entorno tipadas
+│
+├── drizzle/                   ← archivos de migración generados automáticamente
+│   └── ...
+│
+├── _intermedios/              ← análisis del HAR (referencia, no va a producción)
+│
+├── index.ts                   ← punto de entrada: arranca el servidor
+├── drizzle.config.ts          ← configuración de drizzle-kit
+├── .env                       ← variables de entorno (NO se sube a git)
+├── .env.example               ← plantilla de variables (SÍ se sube a git)
+├── package.json
+└── tsconfig.json
+
+¿Por qué esta estructura?
+  - src/db/schema/ separado: el schema es la fuente de verdad.
+    Cuando cambias una tabla, cambias un archivo aquí y drizzle-kit
+    genera la migración automáticamente.
+
+  - routes/ por entidad: cada archivo maneja las rutas de un recurso.
+    Fácil de encontrar: si hay un bug en /reservations, vas a routes/reservations.ts
+
+  - lib/errors.ts: los errores se manejan de forma consistente.
+    Siempre devuelves { error: "mensaje" } con el status HTTP correcto.
+
+  - .env: las credenciales NUNCA van en el código.
+    La URL de la base de datos, claves de API de Stripe, etc.
+    van en .env y se excluyen de git con .gitignore.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 8 — VARIABLES DE ENTORNO Y CONFIGURACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+¿Qué son las variables de entorno?
+  Valores de configuración que cambian según el entorno
+  (desarrollo en tu máquina vs producción en el servidor).
+
+  El más importante para nosotros:
+  DATABASE_URL=postgresql://usuario:contraseña@localhost:5432/betania
+
+  Nunca hardcodees una contraseña en el código. Si subes el código a
+  GitHub con la contraseña, cualquiera puede acceder a tu base de datos.
+
+El archivo .env:
+  DATABASE_URL=postgresql://postgres:postgres@localhost:5432/betania
+  PORT=3000
+  JWT_SECRET=una-clave-secreta-muy-larga
+
+  Bun carga .env automáticamente. No necesitas ninguna librería extra
+  (en Node necesitarías instalar 'dotenv').
+
+El archivo .env.example:
+  DATABASE_URL=postgresql://usuario:contraseña@host:5432/nombre_db
+  PORT=3000
+  JWT_SECRET=
+
+  Este SÍ va a git. Le dice a otros desarrolladores qué variables
+  necesitan configurar sin exponer los valores reales.
+
+src/lib/env.ts — variables de entorno tipadas:
+  En vez de usar process.env.DATABASE_URL directamente (que podría ser
+  undefined y crashear la app), validamos las variables al arrancar:
+
+  import { z } from 'zod'
+
+  const envSchema = z.object({
+    DATABASE_URL: z.string().url(),
+    PORT: z.coerce.number().default(3000),
+    JWT_SECRET: z.string().min(32),
+  })
+
+  export const env = envSchema.parse(process.env)
+  // Si falta DATABASE_URL, la app lanza un error claro al arrancar,
+  // no un crash misterioso cuando se intenta usar.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 9 — EL FLUJO COMPLETO DE UNA PETICIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cuando la app de recepción hace POST /reservations para crear una reserva:
+
+  1. RECEPCIÓN (frontend) → envía:
+       POST /reservations
+       Body: { guestId: 42, roomId: 5, checkIn: "2026-07-01", checkOut: "2026-07-03" }
+
+  2. HONO (framework) → recibe la petición y busca qué handler corresponde
+       app.post('/reservations', ...) ← match
+
+  3. MIDDLEWARE de auth → verifica que el usuario tiene sesión activa
+       Si no: responde 401 Unauthorized
+
+  4. MIDDLEWARE de validación (Zod) → verifica que el body tiene el formato correcto
+       Si checkIn no es una fecha: responde 400 Bad Request con el error
+
+  5. HANDLER → ejecuta la lógica de negocio:
+       - Verifica disponibilidad de la habitación en esas fechas
+       - Calcula el precio según la tarifa
+       - Crea la reserva en PostgreSQL con Drizzle
+       - Crea las reservation_nights (una por noche)
+
+  6. DRIZZLE → traduce a SQL y ejecuta:
+       INSERT INTO reservations (...) VALUES (...)
+       INSERT INTO reservation_nights (...) VALUES (...), (...), (...)
+
+  7. POSTGRESQL → guarda los datos, devuelve los IDs generados
+
+  8. HANDLER → responde con la reserva creada:
+       return c.json({ data: reserva }, 201)
+
+  9. RECEPCIÓN (frontend) → recibe la confirmación y actualiza la UI
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CAPÍTULO 10 — CONVENCIONES DE ESTE PROYECTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NOMBRES:
+  Base de datos:  snake_case  → guest_id, check_in_date, created_at
+  TypeScript:     camelCase   → guestId, checkInDate, createdAt
+  Drizzle mapea automáticamente entre ambos.
+
+RESPUESTAS HTTP:
+  Siempre devolvemos JSON con esta estructura:
+    Éxito:  { data: <resultado> }
+    Error:  { error: "descripción", details?: <info extra> }
+
+  Códigos de estado HTTP que usaremos:
+    200 OK          → GET exitoso
+    201 Created     → POST exitoso (recurso creado)
+    204 No Content  → DELETE exitoso
+    400 Bad Request → datos inválidos (Zod falla)
+    401 Unauthorized → no hay sesión
+    403 Forbidden   → hay sesión pero sin permiso
+    404 Not Found   → el recurso no existe
+    409 Conflict    → habitación ya ocupada, etc.
+    500 Internal Server Error → error inesperado del servidor
+
+ASYNC/AWAIT:
+  Todas las operaciones de base de datos son asíncronas.
+  async/await es la forma moderna de manejar código asíncrono en JS/TS:
+
+  // Sin async/await (callbacks, muy antiguo):
+  db.query('SELECT * FROM guests', function(err, result) {
+    if (err) throw err
+    console.log(result)
+  })
+
+  // Con async/await (moderno):
+  const guests = await db.select().from(guestsTable)
+  console.log(guests)
+
+  La palabra 'await' le dice a JavaScript: "espera aquí hasta que
+  la base de datos responda, pero mientras tanto atiende otras peticiones".
+  Esto es lo que hace a Node/Bun eficientes: no bloquean esperando.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ÍNDICE DE ARCHIVOS DEL PROYECTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  index.ts                  → punto de entrada, arranca Hono en el puerto 3000
+  drizzle.config.ts         → configuración de drizzle-kit (migraciones)
+  .env                      → credenciales locales (no en git)
+  .env.example              → plantilla de variables
+
+  src/lib/env.ts            → variables de entorno validadas con Zod
+  src/lib/errors.ts         → clase AppError y helper de respuestas de error
+
+  src/db/index.ts           → conexión a PostgreSQL con el driver 'postgres'
+  src/db/schema/index.ts    → re-exporta todos los schemas
+  src/db/schema/enums.ts    → tipos enum (reservation_status, gender, etc.)
+  src/db/schema/guests.ts   → tabla guests + tipo inferido
+  src/db/schema/rooms.ts    → tablas room_types + rooms
+  src/db/schema/reservations.ts → tablas reservations + reservation_nights + notas
+
+  src/routes/reservations.ts → CRUD de reservas
+  src/routes/guests.ts       → CRUD de huéspedes
+  src/routes/rooms.ts        → habitaciones y tipos
+
+[Este índice se actualiza a medida que añadimos archivos]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  GLOSARIO RÁPIDO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  API         → Application Programming Interface. La interfaz que expone
+                tu servidor para que otros (el frontend, apps móviles,
+                el agente IA) puedan usarlo.
+
+  REST        → Estilo de diseño de APIs. Las URLs representan recursos
+                (/reservations) y los métodos HTTP la acción (GET=leer,
+                POST=crear, PATCH=modificar, DELETE=borrar).
+
+  JSON        → Formato de datos que usan las APIs. Texto legible por
+                humanos y máquinas: {"id": 1, "nombre": "Betania"}
+
+  ENDPOINT    → Una URL específica de tu API: POST /reservations
+
+  HANDLER     → La función que responde a un endpoint
+
+  MIDDLEWARE  → Función que se ejecuta antes del handler (auth, logging, validación)
+
+  SCHEMA      → Definición de la estructura de datos (Drizzle schema =
+                definición de tablas; Zod schema = definición de inputs válidos)
+
+  MIGRACIÓN   → Script SQL que actualiza la estructura de la DB de forma incremental
+
+  ORM         → Librería que mapea tablas SQL a objetos del lenguaje de programación
+
+  FK          → Foreign Key (clave foránea). Columna que apunta a otra tabla.
+                reservation.guest_id → guests.id
+
+  PK          → Primary Key (clave primaria). Identificador único de cada fila.
+                Normalmente el campo 'id' autoincremental.
+
+  SERIAL      → Tipo de columna PostgreSQL que genera un número entero
+                autoincremental automáticamente para cada nueva fila.
+
+  TRANSACTION → Operación atómica en la DB: o se ejecutan todos los pasos
+                o ninguno. Clave para operaciones financieras.
+
+  ASYNC/AWAIT → Mecanismo para manejar operaciones que toman tiempo
+                (consultas a DB, llamadas a APIs externas) sin bloquear
+                el resto del programa.
+
+  .env        → Archivo con variables de entorno (credenciales, configuración).
+                Nunca se sube a git.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[Este documento se actualiza con cada nuevo capítulo del proyecto]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

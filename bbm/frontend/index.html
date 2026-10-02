@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Booking Manager</title>
+  <link rel="icon" href="/public/img/logo.png" type="image/png">
+  <script>
+    try {
+      var p = JSON.parse((localStorage.getItem('bm-prefs') || localStorage.getItem('betania-prefs')) || '{}')
+      if (p.theme)      document.documentElement.setAttribute('data-theme', p.theme)
+      if (p.fontFamily) document.documentElement.setAttribute('data-font',  p.fontFamily)
+      if (p.fontSize)   document.documentElement.style.fontSize = p.fontSize + 'px'
+    } catch(e) {}
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./main.tsx"></script>
+</body>
+</html>

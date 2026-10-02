@@ -1,0 +1,2 @@
+ALTER TABLE reservations
+  ADD COLUMN IF NOT EXISTS extra_room_ids JSONB NOT NULL DEFAULT '[]'::JSONB;

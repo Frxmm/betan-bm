@@ -1,0 +1,1 @@
+ALTER TABLE reservations ADD COLUMN IF NOT EXISTS last_modified_at TIMESTAMPTZ;

@@ -1,0 +1,1 @@
+ALTER TABLE "rooms" ADD COLUMN IF NOT EXISTS "qr_token" text UNIQUE;

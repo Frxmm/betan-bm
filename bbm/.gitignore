@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.*
+.DS_Store
+exports/
+*.dump
+# Datos personales / específicos de un cliente: no se suben
+scripts/legacy-betania/
+qr-habitaciones.pdf

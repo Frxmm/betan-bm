@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Betan, el PMS con IA para hoteles independientes</title>
+<meta name="description" content="Betan es el sistema de gestión hotelera para hoteles independientes: reservas directas sin comisión, check-in autónomo con cerraduras, SES Hospedajes, precios dinámicos y un agente IA por chat y voz. Uno o varios hoteles desde un panel.">
+<meta name="theme-color" content="#0f2a43">
+<link rel="canonical" href="https://betan.example.com/">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="es_ES">
+<meta property="og:title" content="Betan: tu hotel funciona solo. Hasta a las 3 de la mañana.">
+<meta property="og:description" content="Reserva, cobro, parte de viajeros y código de puerta en un solo flujo. Con un agente IA que trabaja por chat y voz.">
+<meta property="og:url" content="https://betan.example.com/">
+<meta property="og:image" content="https://betan.example.com/og.svg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f4fd8'/%3E%3Cpath d='M20 14h14a10 10 0 0 1 5 18.6A11 11 0 0 1 36 50H20z' fill='none' stroke='%23f4c430' stroke-width='6' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Hanken+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<script>try{var t=localStorage.getItem("betan-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}document.documentElement.classList.add("js")</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Betan Booking Manager","applicationCategory":"BusinessApplication","operatingSystem":"Web, Android","description":"PMS y motor de reservas con IA para hoteles independientes: reservas directas, channel manager, check-in autónomo con cerraduras, SES Hospedajes, precios dinámicos y agente IA por chat y voz. Varios hoteles desde un panel.","inLanguage":"es","featureList":["Agente IA por chat y voz con 84 herramientas, confirmación de cada acción y permisos por rol","Motor de precios dinámicos con 8 reglas y auditoría de su efecto","Comparativa con competidores y recuperación de carritos y cancelaciones","Parte de viajeros SES Hospedajes con validación previa y escaneo de DNI con IA","Cerraduras TTLock y control de accesos ZKTeco","Varios hoteles desde un mismo panel"],"offers":{"@type":"Offer","priceCurrency":"EUR","description":"Planes Esencial, Pro e IA + Cerraduras. Precio según hotel."},"url":"https://betan.example.com/"}
+</script>
+<style>
+:root{
+  --navy:#0f2a43; --blue:#1f4fd8; --brass:#f4c430;
+  --bg:#f2f5f8; --surface:#ffffff; --sunk:#e7ecf1; --ink:#0f2a43; --muted:#475a6d; --line:#d3dce5;
+  --primary:#1f4fd8; --on-primary:#ffffff; --link:#1a44bd;
+  --ok:#137a4b; --ok-bg:#dff3e8; --bad:#a3361c; --soon-bg:#fff0b3;
+  --band:#0f2a43; --band-ink:#eaf0f6; --band-muted:#b4c3d2; --band-surface:#173754; --band-line:#2a4a68;
+  --shadow:0 1px 2px rgba(15,42,67,.06),0 12px 32px -12px rgba(15,42,67,.22);
+  --r-lg:20px; --r-md:12px;
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --body:"Hanken Grotesk",ui-sans-serif,system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0b1826; --surface:#122437; --sunk:#0f1f30; --ink:#e8eef5; --muted:#a6b5c5; --line:#24405b;
+  --primary:#8fa9ff; --on-primary:#0b1826; --link:#a9bdff;
+  --ok:#6fdaa6; --ok-bg:#123a2b; --bad:#ff9d85; --soon-bg:#4a3d10;
+  --band:#132a42; --band-surface:#1a3552; --band-line:#2c4d6e; --band-muted:#b9c7d6;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 40px -16px rgba(0,0,0,.6); color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0b1826; --surface:#122437; --sunk:#0f1f30; --ink:#e8eef5; --muted:#a6b5c5; --line:#24405b;
+  --primary:#8fa9ff; --on-primary:#0b1826; --link:#a9bdff;
+  --ok:#6fdaa6; --ok-bg:#123a2b; --bad:#ff9d85; --soon-bg:#4a3d10;
+  --band:#132a42; --band-surface:#1a3552; --band-line:#2c4d6e; --band-muted:#b9c7d6;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 40px -16px rgba(0,0,0,.6); color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;scroll-padding-top:80px}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 1.0625rem/1.6 var(--body);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+img,svg{display:block;max-width:100%}
+h1,h2,h3{font-family:var(--display);line-height:1.08;margin:0;letter-spacing:-.02em;font-weight:800}
+h2{font-size:clamp(2rem,4.2vw,3.1rem);text-wrap:balance}
+h3{font-size:1.2rem;font-weight:600;letter-spacing:-.01em;line-height:1.25}
+p{margin:0}
+a{color:var(--link)}
+:focus-visible{outline:3px solid var(--brass);outline-offset:3px;border-radius:6px}
+.wrap{width:min(1180px,100% - 40px);margin-inline:auto}
+section{padding:clamp(72px,10vw,128px) 0}
+.lead{font-size:clamp(1.08rem,1.6vw,1.22rem);color:var(--muted);max-width:60ch;margin-top:18px}
+.head{max-width:760px;margin-bottom:clamp(36px,5vw,56px)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.skip{position:absolute;left:-999px;top:8px;background:var(--surface);color:var(--ink);padding:8px 14px;border-radius:8px;z-index:99}
+.skip:focus{left:8px}
+.ph{background:var(--soon-bg);color:var(--ink);padding:0 .3em;border-radius:4px;font-weight:700;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.soon{display:inline-block;background:var(--soon-bg);color:var(--ink);font-size:.8rem;font-weight:700;padding:2px 10px;border-radius:99px;white-space:nowrap}
+
+/* botones */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 22px;border-radius:99px;font:700 1rem/1.15 var(--body);text-decoration:none;text-align:center;border:2px solid var(--ink);color:var(--ink);background:transparent;cursor:pointer;transition:background .15s,color .15s,transform .15s}
+.btn:hover{background:var(--ink);color:var(--bg)}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.btn.primary:hover{filter:brightness(1.1);transform:translateY(-1px)}
+.btn.small{min-height:40px;padding:0 18px;font-size:.95rem}
+.band .btn:not(.primary){border-color:var(--band-ink);color:var(--band-ink)}
+.ctas{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+
+/* cabecera */
+.top{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:saturate(1.4) blur(12px);-webkit-backdrop-filter:saturate(1.4) blur(12px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:16px;height:68px}
+.brand{display:flex;align-items:center;gap:10px;font:800 1.3rem var(--display);color:var(--ink);text-decoration:none;letter-spacing:-.02em}
+.brand svg{width:32px;height:32px}
+.nav{display:flex;gap:2px;margin-left:auto}
+.nav a{color:var(--ink);text-decoration:none;font-weight:500;font-size:.95rem;padding:8px 10px;border-radius:8px}
+.nav a:hover{background:var(--sunk)}
+.theme{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink);display:grid;place-items:center;cursor:pointer;flex:none}
+.theme svg{width:18px;height:18px}
+@media (max-width:1060px){.nav{display:none}.top .btn{margin-left:auto}}
+
+/* hero */
+.hero{padding:clamp(48px,7vw,96px) 0 clamp(56px,7vw,88px)}
+.hero .wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:clamp(32px,5vw,72px);align-items:center}
+.hero h1{font-size:clamp(2.6rem,6vw,5rem);letter-spacing:-.035em;line-height:.98;text-wrap:balance}
+.hero .lead{font-size:clamp(1.1rem,1.7vw,1.28rem);max-width:33em;margin-top:24px}
+.proofline{margin-top:28px;display:flex;align-items:center;gap:12px;color:var(--muted);font-size:.95rem}
+.proofline .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-bg);flex:none}
+@media (max-width:900px){.hero .wrap{grid-template-columns:1fr}}
+
+/* registro nocturno (hero) */
+.night{position:relative;padding-bottom:70px}
+.log{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden}
+.log-h{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.log-h b{font:600 1.02rem var(--display)}
+.pill{font-size:.8rem;font-weight:700;padding:4px 10px;border-radius:99px;background:var(--sunk);color:var(--muted);white-space:nowrap}
+.log ol{list-style:none;margin:0;padding:8px 0}
+.log li{display:grid;grid-template-columns:48px 30px 1fr;gap:12px;align-items:start;padding:11px 20px}
+.log time{font-variant-numeric:tabular-nums;font-weight:700;color:var(--muted);font-size:.92rem;padding-top:4px}
+.log .ic{width:30px;height:30px;border-radius:9px;background:var(--sunk);display:grid;place-items:center;color:var(--primary)}
+.log .ic svg{width:17px;height:17px}
+.log strong{display:block;font-size:.98rem;line-height:1.3}
+.log li span:not(.ic){display:block;color:var(--muted);font-size:.9rem;line-height:1.4;margin-top:2px}
+.log li.door{padding-right:150px}
+.log li.door .ic{background:var(--brass);color:var(--navy)}
+.fob{position:absolute;right:22px;bottom:0;width:132px;transform-origin:50% -30px;transform:rotate(-7deg)}
+.fob::before{content:"";position:absolute;left:50%;top:-34px;width:2px;height:44px;background:var(--muted);opacity:.5}
+.fob-body{background:var(--blue);color:#fff;border-radius:18px 18px 26px 26px;padding:30px 16px 16px;box-shadow:0 18px 40px -14px rgba(15,42,67,.55);position:relative}
+.fob-body::before{content:"";position:absolute;top:10px;left:50%;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:var(--bg)}
+.fob-num{font:800 2.9rem/1 var(--display);color:var(--brass);letter-spacing:-.03em}
+.fob-sub{font-size:.8rem;margin-top:6px}
+.js .log li{opacity:.3;transition:opacity .45s ease}
+.js .log li.on{opacity:1}
+.js .fob{transition:transform 1s cubic-bezier(.3,1.7,.5,1)}
+.js .night.open .fob{transform:rotate(5deg)}
+@media (max-width:520px){.log li{grid-template-columns:42px 28px 1fr;padding:10px 14px;gap:9px}.log li.door{padding-right:14px}.log-h{padding:14px}.fob{width:112px;right:10px}.fob-num{font-size:2.3rem}.night{padding-bottom:120px}}
+
+/* prueba social */
+.proof{padding:0 0 clamp(64px,8vw,104px)}
+.proof-grid{display:grid;grid-template-columns:1.1fr 2fr;gap:clamp(24px,4vw,56px);align-items:center;border-top:1px solid var(--line);padding-top:clamp(32px,4vw,48px)}
+.proof blockquote{margin:0;font:600 clamp(1.2rem,2vw,1.45rem)/1.35 var(--display);letter-spacing:-.01em}
+.proof cite{display:block;margin-top:14px;font:500 .95rem var(--body);font-style:normal;color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:18px}
+.stat b{display:inline-block;font:800 1.15rem/1.2 var(--display)}
+.stat span{display:block;color:var(--muted);font-size:.9rem;margin-top:10px;line-height:1.35}
+@media (max-width:900px){.proof-grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+
+/* bandas oscuras */
+.band{background:var(--band);color:var(--band-ink)}
+.band .lead{color:var(--band-muted)}
+
+/* cómo funciona */
+.steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:20px;counter-reset:s}
+.steps li{counter-increment:s;border-top:2px solid var(--band-line);padding-top:24px;position:relative}
+.steps li::before{content:counter(s);position:absolute;top:-17px;left:0;width:32px;height:32px;border-radius:50%;background:var(--brass);color:var(--navy);font:800 .95rem/32px var(--display);text-align:center}
+.steps p{color:var(--band-muted);margin-top:8px;font-size:.98rem}
+@media (max-width:860px){.steps{grid-template-columns:1fr 1fr;row-gap:48px}}
+@media (max-width:480px){.steps{grid-template-columns:1fr}}
+
+.planning{margin-top:clamp(48px,6vw,72px);background:var(--band-surface);border:1px solid var(--band-line);border-radius:var(--r-lg);padding:20px}
+.pl-h{display:flex;justify-content:space-between;align-items:baseline;gap:6px 16px;flex-wrap:wrap;margin-bottom:16px}
+.pl-h b{font:600 1.05rem var(--display)}
+.pl-h span{color:var(--band-muted);font-size:.9rem}
+.pl-scroll{overflow-x:auto;border-radius:8px}
+.pl{display:grid;grid-template-columns:52px repeat(7,minmax(76px,1fr));gap:6px 0;min-width:620px;font-size:.85rem}
+.pl .d{color:var(--band-muted);text-align:center;padding-bottom:4px;line-height:1.3}
+.pl .d i{display:block;font-style:normal;font-weight:700;color:var(--band-ink);font-size:1rem}
+.pl .r{grid-column:1;font-weight:700;padding:8px 0}
+.pl .bar{border-radius:8px;padding:8px 10px;margin:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.b-dir{background:#3d6af0;color:#fff}.b-ota{background:#f4c430;color:#0f2a43}.b-blk{background:repeating-linear-gradient(135deg,#2a4a68 0 6px,#22405c 6px 12px);color:var(--band-ink)}
+.b-drag{outline:2px dashed #f4c430;outline-offset:2px;transform:translateY(-2px) rotate(-1deg);box-shadow:0 10px 20px -8px rgba(0,0,0,.6)}
+
+/* integraciones */
+.integ{display:grid;grid-template-columns:.9fr 1.1fr;gap:clamp(20px,3vw,32px);align-items:start}
+.lockcard{background:var(--navy);color:#eaf0f6;border-radius:var(--r-lg);padding:clamp(22px,3vw,32px);box-shadow:var(--shadow)}
+:root[data-theme="dark"] .lockcard{background:var(--surface);border:1px solid var(--line)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .lockcard{background:var(--surface);border:1px solid var(--line)}}
+.lockcard h3{font-size:1.4rem}
+.lockcard p{color:#b4c3d2;margin-top:8px}
+.pin{display:flex;gap:8px;margin:24px 0 10px}
+.pin span{width:46px;height:58px;border-radius:10px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);display:grid;place-items:center;font:800 1.7rem var(--display);color:var(--brass)}
+.pin span:nth-child(3){margin-right:10px}
+.pinmeta{font-size:.92rem;color:#b4c3d2}
+.lockcard ul{list-style:none;padding:22px 0 0;margin:22px 0 0;display:grid;gap:12px;border-top:1px solid rgba(255,255,255,.14)}
+.lockcard li{display:flex;gap:10px;font-size:.97rem;color:#dbe4ee}
+.lockcard li svg{flex:none;width:18px;height:18px;margin-top:4px;color:var(--brass)}
+.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.group{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:18px}
+.group h3{font:700 .95rem var(--body);color:var(--muted);letter-spacing:0}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:10px;padding:7px 12px;font-weight:700;font-size:.95rem;background:var(--bg)}
+.chip::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.chip.later{border-style:dashed;font-weight:500;color:var(--muted)}
+.chip.later::before{background:transparent;border:1.5px solid var(--muted);width:7px;height:7px}
+.group p{font-size:.9rem;color:var(--muted);margin-top:12px;line-height:1.45}
+.legend{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:.88rem;margin-top:14px}
+.legend .chip{background:none;border:0;padding:0;font-weight:500;font-size:.88rem;color:var(--muted)}
+@media (max-width:900px){.integ{grid-template-columns:1fr}}
+@media (max-width:560px){.tiles{grid-template-columns:1fr}.pin{gap:6px}.pin span{width:38px;height:50px;font-size:1.4rem}.pin span:nth-child(3){margin-right:6px}}
+
+/* IA */
+.ai{display:grid;grid-template-columns:1.15fr .85fr;gap:20px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden}
+.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 20px;border-bottom:1px solid var(--line);font-weight:700;flex-wrap:wrap}
+.panel-h small{font-weight:500;color:var(--muted);font-size:.85rem}
+.chat{padding:20px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:86%;padding:12px 15px;border-radius:16px;font-size:.98rem;line-height:1.45}
+.msg.u{align-self:flex-end;background:var(--primary);color:var(--on-primary);border-bottom-right-radius:5px}
+.msg.a{align-self:flex-start;background:var(--sunk);border-bottom-left-radius:5px}
+.tool{display:inline-block;font-size:.78rem;font-weight:700;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:1px 7px;margin-bottom:6px}
+.confirm{display:flex;gap:8px;margin-top:12px}
+.confirm span{border-radius:99px;padding:6px 18px;font-weight:700;font-size:.9rem;background:var(--surface);border:1px solid var(--line)}
+.confirm span:first-child{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
+.ai-side{display:grid;gap:20px;align-content:start}
+.voice{padding:22px;display:flex;gap:18px;align-items:flex-start}
+.mic{width:60px;height:60px;border-radius:50%;background:var(--blue);display:grid;place-items:center;flex:none;box-shadow:0 0 0 8px color-mix(in srgb,var(--blue) 18%,transparent)}
+.mic svg{width:26px;height:26px;color:var(--brass)}
+.voice b{font:600 1.15rem var(--display);display:block}
+.voice p{color:var(--muted);font-size:.95rem;margin-top:4px}
+.wave{display:flex;align-items:center;gap:3px;height:22px;margin-top:12px}
+.wave i{width:4px;border-radius:2px;background:var(--primary)}
+.brief{padding:20px}
+.brief-t{font-weight:700;display:flex;justify-content:space-between;gap:8px}
+.brief-t small{font-weight:500;color:var(--muted)}
+.brief ul{margin:14px 0 0;padding:0;list-style:none;display:grid;gap:10px;font-size:.95rem}
+.brief li{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--line);padding-bottom:10px}
+.brief li:last-child{border:0;padding:0}
+.brief li>span{color:var(--muted)}
+.brief li b{text-align:right}
+.up{color:var(--ok);font-weight:700;font-size:.85rem;display:block}
+.facts{display:grid;grid-template-columns:repeat(4,1fr);gap:28px;margin-top:clamp(40px,5vw,56px)}
+.facts h3{font-size:1.05rem}
+.facts p{color:var(--muted);font-size:.96rem;margin-top:6px}
+@media (max-width:960px){.ai{grid-template-columns:1fr}.facts{grid-template-columns:1fr 1fr}}
+@media (max-width:520px){.facts{grid-template-columns:1fr;gap:20px}.chat{padding:14px}.msg{max-width:92%}}
+
+/* revenue */
+.rev{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+.rules{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--band-line);border:1px solid var(--band-line);border-radius:var(--r-lg);overflow:hidden}
+.rules li{background:var(--band-surface);padding:16px 18px}
+.rules b{display:block;font-weight:700}
+.rules span{display:block;color:var(--band-muted);font-size:.9rem;line-height:1.4;margin-top:4px}
+.audit{background:var(--band-surface);border:1px solid var(--band-line);border-radius:var(--r-lg);overflow:hidden}
+.audit .panel-h{border-color:var(--band-line)}
+.audit .panel-h small{color:var(--band-muted)}
+.audit table{width:100%;border-collapse:collapse;font-size:.93rem}
+.audit th,.audit td{text-align:left;padding:12px 20px;border-bottom:1px solid var(--band-line)}
+.audit th{color:var(--band-muted);font-weight:500;font-size:.85rem}
+.audit td.n{font-variant-numeric:tabular-nums}
+.vd{display:inline-block;border-radius:99px;padding:3px 10px;font-weight:700;font-size:.8rem;white-space:nowrap}
+.vd.ok{background:#1d5c40;color:#d2f7e4}.vd.neu{background:#2f5172;color:#e3eaf2}.vd.bad{background:#7a2e1e;color:#ffe1d9}
+.advice{padding:16px 20px;color:var(--band-muted);font-size:.93rem}
+.advice b{color:var(--band-ink)}
+.comp{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--band-line);border-top:1px solid var(--band-line)}
+.comp div{background:var(--band-surface);padding:14px 20px}
+.comp small{display:block;color:var(--band-muted);font-size:.82rem}
+.comp b{font:800 1.3rem var(--display)}
+.fine{color:var(--band-muted);font-size:.9rem;margin-top:16px;max-width:75ch}
+.recover{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin-top:clamp(40px,5vw,56px);padding-top:32px;border-top:1px solid var(--band-line)}
+.recover p{color:var(--band-muted);font-size:.96rem;margin-top:6px}
+@media (max-width:960px){.rev{grid-template-columns:1fr}}
+@media (max-width:640px){.rules{grid-template-columns:1fr}.recover{grid-template-columns:1fr;gap:20px}.audit th,.audit td{padding:10px 12px}.comp div{padding:12px}.comp b{font-size:1.1rem}}
+
+/* cumplimiento */
+.ses{display:grid;grid-template-columns:.95fr 1.05fr;gap:clamp(28px,5vw,64px);align-items:center}
+.checks{list-style:none;margin:0;padding:8px 0}
+.checks li{display:flex;gap:12px;align-items:flex-start;padding:12px 20px;font-size:.98rem;font-weight:600}
+.checks li svg{flex:none;width:20px;height:20px;margin-top:2px;color:var(--ok)}
+.checks li.warn svg{color:var(--bad)}
+.checks li span{display:block;color:var(--muted);font-size:.9rem;font-weight:400}
+.ses-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 20px;border-top:1px solid var(--line);background:var(--sunk)}
+.ses-foot small{color:var(--muted);font-size:.88rem}
+.ses-list{display:grid;gap:22px;margin-top:32px}
+.ses-list h3{font-size:1.08rem}
+.ses-list p{color:var(--muted);margin-top:4px;font-size:.98rem}
+.soonbox{margin-top:28px;border:1.5px dashed var(--line);border-radius:var(--r-md);padding:14px 16px;font-size:.93rem;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+@media (max-width:900px){.ses{grid-template-columns:1fr}.ses>.panel{order:2}}
+
+/* multi-hotel */
+.multi{display:grid;grid-template-columns:1fr 1.1fr;gap:clamp(28px,5vw,64px);align-items:center}
+.switch{display:flex;gap:6px;padding:12px;border-bottom:1px solid var(--line);overflow-x:auto}
+.switch span{white-space:nowrap;padding:7px 13px;border-radius:9px;font-weight:600;font-size:.9rem;color:var(--muted)}
+.switch span.on{background:var(--primary);color:var(--on-primary)}
+.hotels{width:100%;border-collapse:collapse;font-size:.94rem}
+.hotels th,.hotels td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.hotels th{font-weight:500;color:var(--muted);font-size:.84rem}
+.hotels td.n{font-variant-numeric:tabular-nums;font-weight:700}
+.hotels tr:last-child td{border-bottom:0}
+.occ{display:block;height:6px;border-radius:3px;background:var(--sunk);margin-top:7px;overflow:hidden;min-width:56px}
+.occ i{display:block;height:100%;background:var(--primary)}
+.warn-t{color:var(--bad);font-weight:600}
+.multi ul{margin:24px 0 0;padding:0;list-style:none;display:grid;gap:14px}
+.multi li{display:flex;gap:12px}
+.multi li svg{flex:none;width:20px;height:20px;margin-top:3px;color:var(--primary)}
+@media (max-width:900px){.multi{grid-template-columns:1fr}}
+@media (max-width:480px){.hotels th,.hotels td{padding:10px}.hide-s{display:none}}
+
+/* planes */
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:stretch}
+.plan{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:28px;display:flex;flex-direction:column;position:relative}
+.plan.hl{border:2px solid var(--primary);box-shadow:var(--shadow)}
+.plan.hl .tag{position:absolute;top:-13px;left:24px;background:var(--primary);color:var(--on-primary);font-weight:700;font-size:.8rem;padding:3px 12px;border-radius:99px}
+.plan h3{font-size:1.45rem}
+.plan .for{color:var(--muted);margin-top:6px;font-size:.96rem;min-height:3.2em}
+.plan .price{font:800 1.5rem var(--display);margin:18px 0 0}
+.plan .price small{display:table;font:500 .88rem var(--body);margin-top:6px}
+.plan ul{list-style:none;margin:20px 0 26px;padding:20px 0 0;border-top:1px solid var(--line);display:grid;gap:10px;flex:1;align-content:start}
+.plan li{display:flex;gap:10px;font-size:.96rem}
+.plan li svg{flex:none;width:18px;height:18px;margin-top:4px;color:var(--ok)}
+.plan .btn{width:100%}
+.group-note{margin-top:20px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px 24px}
+.group-note p{color:var(--muted);max-width:66ch}
+.group-note b{color:var(--ink)}
+@media (max-width:900px){.plans{grid-template-columns:1fr;gap:24px}.plan .for{min-height:0}}
+
+/* faq */
+.faq-grid{display:grid;grid-template-columns:.8fr 1.2fr;gap:clamp(24px,5vw,72px);align-items:start}
+details{border-bottom:1px solid var(--line)}
+details:first-child{border-top:1px solid var(--line)}
+summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:16px;padding:20px 2px;font-weight:700;font-size:1.05rem}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"";flex:none;width:10px;height:10px;margin:6px 4px 0 0;border-right:2.5px solid currentColor;border-bottom:2.5px solid currentColor;transform:rotate(45deg);transition:transform .2s}
+details[open] summary::after{transform:rotate(-135deg);margin-top:11px}
+details p{padding:0 2px 22px;color:var(--muted);max-width:65ch}
+@media (max-width:900px){.faq-grid{grid-template-columns:1fr}}
+
+/* contacto */
+.contact .wrap{display:grid;grid-template-columns:1fr 1fr;gap:clamp(28px,5vw,72px);align-items:start}
+.contact ul{list-style:none;padding:0;margin:28px 0 0;display:grid;gap:12px;color:var(--band-muted)}
+.contact li{display:flex;gap:10px}
+.contact li svg{flex:none;width:20px;height:20px;margin-top:3px;color:var(--brass)}
+form{background:var(--surface);color:var(--ink);border-radius:var(--r-lg);padding:clamp(20px,3vw,32px);display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.field{display:grid;gap:6px;align-content:start}
+.field.full,.form-row,#fmsg{grid-column:1/-1}
+label{font-weight:700;font-size:.92rem}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;min-height:46px;width:100%}
+input:focus-visible,select:focus-visible,textarea:focus-visible{border-color:var(--primary);outline:3px solid color-mix(in srgb,var(--primary) 35%,transparent);outline-offset:1px}
+textarea{min-height:96px;resize:vertical}
+.form-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.band form .btn:not(.primary){border-color:var(--ink);color:var(--ink)}
+.band form .btn:not(.primary):hover{background:var(--ink);color:var(--surface)}
+#fmsg{color:var(--muted);font-size:.92rem;min-height:1.2em}
+@media (max-width:860px){.contact .wrap{grid-template-columns:1fr}}
+@media (max-width:520px){form{grid-template-columns:1fr}.form-row .btn{flex:1 1 100%}}
+
+/* footer */
+footer{padding:56px 0 40px;border-top:1px solid var(--line);font-size:.95rem}
+.cols{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:28px}
+.cols p{color:var(--muted);margin-top:12px;max-width:36ch}
+footer h2{font:700 .95rem var(--body);letter-spacing:0;margin-bottom:10px}
+footer ul{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+footer a:not(.brand){color:var(--muted);text-decoration:none}
+footer a:not(.brand):hover{color:var(--ink);text-decoration:underline}
+.legal{margin-top:40px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:.86rem}
+@media (max-width:760px){.cols{grid-template-columns:1fr 1fr}.cols>div:first-child{grid-column:1/-1}}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Saltar al contenido</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+ <symbol id="i-check" viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+ <symbol id="i-warn" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 5.5v5.5M10 14v.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+ <symbol id="i-card" viewBox="0 0 20 20"><rect x="2" y="4.5" width="16" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 8.5h16" stroke="currentColor" stroke-width="2"/></symbol>
+ <symbol id="i-id" viewBox="0 0 20 20"><rect x="2" y="4" width="16" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="7" cy="9.5" r="2" fill="currentColor"/><path d="M11 8.5h4M11 11.5h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+ <symbol id="i-shield" viewBox="0 0 20 20"><path d="M10 2l6.5 2.5v5c0 4-2.8 7-6.5 8.5C6.3 16.5 3.5 13.5 3.5 9.5v-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M7 10l2.2 2.2L13.5 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+ <symbol id="i-chat" viewBox="0 0 20 20"><path d="M3 15.5l1.2-3.6A6.8 6.8 0 1 1 7 15z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+ <symbol id="i-key" viewBox="0 0 20 20"><circle cx="6.5" cy="13.5" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 11l7-7M13.5 6.5l2 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+ <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<header class="top">
+ <div class="wrap">
+  <a class="brand" href="#top" aria-label="Betan, inicio">
+   <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#1f4fd8"/><path d="M21 14h13a10 10 0 0 1 5 18.6A11 11 0 0 1 36 50H21z" fill="none" stroke="#f4c430" stroke-width="6" stroke-linejoin="round"/></svg>
+   Betan
+  </a>
+  <nav class="nav" aria-label="Principal">
+   <a href="#como">Cómo funciona</a><a href="#integraciones">Cerraduras</a><a href="#ia">IA</a><a href="#precios">Precios dinámicos</a><a href="#cumplimiento">SES</a><a href="#multihotel">Varios hoteles</a><a href="#planes">Planes</a>
+  </nav>
+  <a class="btn primary small" href="#contacto">Pedir demo</a>
+  <button class="theme" id="theme" type="button" aria-label="Cambiar entre modo claro y oscuro">
+   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/></svg>
+  </button>
+ </div>
+</header>
+
+<main id="main">
+<section class="hero" id="top" aria-labelledby="t-hero">
+ <div class="wrap">
+  <div>
+   <h1 id="t-hero">Tu hotel funciona solo. Hasta a las 3 de la mañana.</h1>
+   <p class="lead">Betan es el sistema de gestión para hoteles independientes que une reserva, cobro, parte de viajeros y código de puerta en un solo flujo. El huésped llega, abre y duerme. Tú te enteras por la mañana.</p>
+   <div class="ctas">
+    <a class="btn primary" href="#contacto">Pedir demo</a>
+    <a class="btn" href="#como">Ver cómo funciona</a>
+   </div>
+   <p class="proofline"><span class="dot" aria-hidden="true"></span>En producción cada día en Hotel Betania, Benalmádena.</p>
+  </div>
+
+  <div class="night" id="night" role="img" aria-label="Ejemplo de una noche sin recepcionista: reserva directa pagada a las 23:48, check-in online, parte de viajeros validado, código enviado por WhatsApp y la puerta de la habitación 214 abierta a las 03:12.">
+   <div class="log" aria-hidden="true">
+    <div class="log-h"><b>Esta noche en recepción</b><span class="pill">Nadie de guardia</span></div>
+    <ol>
+     <li><time>23:48</time><span class="ic"><svg><use href="#i-card"/></svg></span><div><strong>Reserva directa pagada</strong><span>Laura M., 2 noches, 186,00 € con Stripe</span></div></li>
+     <li><time>23:51</time><span class="ic"><svg><use href="#i-id"/></svg></span><div><strong>Check-in online completado</strong><span>DNI leído con IA y contrato firmado en el móvil</span></div></li>
+     <li><time>23:51</time><span class="ic"><svg><use href="#i-shield"/></svg></span><div><strong>Parte de viajeros validado</strong><span>Listo para SES Hospedajes, sin campos pendientes</span></div></li>
+     <li><time>23:52</time><span class="ic"><svg><use href="#i-chat"/></svg></span><div><strong>Código enviado por WhatsApp</strong><span>Habitación 214, válido hasta la salida</span></div></li>
+     <li class="door"><time>03:12</time><span class="ic"><svg><use href="#i-key"/></svg></span><div><strong>Puerta 214 abierta</strong><span>Laura ha llegado. Nadie tuvo que levantarse.</span></div></li>
+    </ol>
+   </div>
+   <div class="fob" aria-hidden="true"><div class="fob-body"><div class="fob-num">214</div><div class="fob-sub">Laura M., 2 noches</div></div></div>
+  </div>
+ </div>
+</section>
+
+<section class="proof" aria-labelledby="t-proof">
+ <div class="wrap proof-grid">
+  <div>
+   <h2 id="t-proof" class="sr">Resultados en Hotel Betania</h2>
+   <blockquote>&ldquo;<span class="ph">[DATO REAL] cita del equipo de Hotel Betania sobre el antes y el después</span>&rdquo;</blockquote>
+   <cite>Fran, Hotel Betania, Benalmádena</cite>
+  </div>
+  <div class="stats">
+   <div class="stat"><b class="ph">[DATO REAL]</b><span>reservas directas sobre el total</span></div>
+   <div class="stat"><b class="ph">[DATO REAL]</b><span>comisiones ahorradas al año</span></div>
+   <div class="stat"><b class="ph">[DATO REAL]</b><span>partes de viajeros enviados</span></div>
+   <div class="stat"><b class="ph">[DATO REAL]</b><span>llegadas sin pasar por recepción</span></div>
+  </div>
+ </div>
+</section>
+
+<section class="band" id="como" aria-labelledby="t-como">
+ <div class="wrap">
+  <div class="head">
+   <h2 id="t-como">De la reserva a la puerta abierta, sin que nadie baje a recepción.</h2>
+   <p class="lead">Cada paso lanza el siguiente. Si algo falta, Betan lo para y te avisa antes de que el huésped esté en la puerta.</p>
+  </div>
+  <ol class="steps">
+   <li><h3>Reserva directa</h3><p>Desde tu web o el widget que pegas en tu página, en 7 idiomas y sin comisión por reserva.</p></li>
+   <li><h3>Cobro</h3><p>Pago con Stripe al reservar. El saldo pendiente se paga desde el portal del huésped.</p></li>
+   <li><h3>Check-in online</h3><p>Enlace por email y WhatsApp: documento escaneado con IA, firma del contrato y hora de llegada.</p></li>
+   <li><h3>Código de puerta</h3><p>Con el saldo a cero, el código TTLock o la tarjeta ZKTeco llegan solos al huésped.</p></li>
+  </ol>
+
+  <div class="planning">
+   <div class="pl-h"><b>Planning, semana del 12 de octubre</b><span>Arrastra una reserva para cambiarla de habitación o de fecha</span></div>
+   <div class="pl-scroll" tabindex="0" role="region" aria-label="Maqueta del planning de habitaciones, desplazable en horizontal">
+    <div class="pl" aria-hidden="true">
+     <div></div><div class="d">lun<i>12</i></div><div class="d">mar<i>13</i></div><div class="d">mié<i>14</i></div><div class="d">jue<i>15</i></div><div class="d">vie<i>16</i></div><div class="d">sáb<i>17</i></div><div class="d">dom<i>18</i></div>
+     <div class="r">101</div><div class="bar b-dir" style="grid-column:2/5">Familia Ortega, directa</div><div class="bar b-ota" style="grid-column:6/9">Booking.com, 3 noches</div>
+     <div class="r">102</div><div class="bar b-ota" style="grid-column:3/5">Expedia</div><div class="bar b-dir" style="grid-column:5/9">Directa, pagada</div>
+     <div class="r">103</div><div class="bar b-blk" style="grid-column:2/4">Bloqueada, pintura</div><div class="bar b-dir b-drag" style="grid-column:5/7">García, moviendo</div>
+     <div class="r">214</div><div class="bar b-dir" style="grid-column:2/4">Laura M., check-in hecho</div><div class="bar b-ota" style="grid-column:4/8">Jumbo, 4 noches</div>
+    </div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<section id="integraciones" aria-labelledby="t-int">
+ <div class="wrap">
+  <div class="head">
+   <h2 id="t-int">Cerraduras, pagos y canales, conectados de serie.</h2>
+   <p class="lead">Betan habla con lo que abre tus puertas y con lo que te trae reservas. Las cuentas quedan a tu nombre, no al nuestro.</p>
+  </div>
+  <div class="integ">
+   <div class="lockcard">
+    <h3>Una llave que llega sola</h3>
+    <p>Código TTLock generado para las fechas exactas de la estancia.</p>
+    <div class="pin" role="img" aria-label="Ejemplo de código de puerta: 482 107"><span>4</span><span>8</span><span>2</span><span>1</span><span>0</span><span>7</span></div>
+    <div class="pinmeta">Habitación 214, activo desde las 14:00 del día de llegada</div>
+    <ul>
+     <li><svg aria-hidden="true"><use href="#i-check"/></svg>Solo se envía con el saldo a cero, salvo los canales que marques como exentos.</li>
+     <li><svg aria-hidden="true"><use href="#i-check"/></svg>Tarjeta ZKTeco enrolada con el número de reserva y revocada al hacer el check-out.</li>
+     <li><svg aria-hidden="true"><use href="#i-check"/></svg>Si el huésped encadena estancias, su tarjeta se reutiliza sin pasar por recepción.</li>
+     <li><svg aria-hidden="true"><use href="#i-check"/></svg>Alerta si un huésped que llega hoy aún no tiene acceso.</li>
+    </ul>
+   </div>
+   <div>
+    <div class="tiles">
+     <div class="group"><h3>Cerraduras y accesos</h3><div class="chips"><span class="chip">TTLock</span><span class="chip">ZKTeco</span><span class="chip later">Salto</span><span class="chip later">Nuki</span><span class="chip later">Dormakaba</span></div></div>
+     <div class="group"><h3>Canales</h3><div class="chips"><span class="chip">Nobeds</span><span class="chip">FrontDesk Master</span><span class="chip">Jumbo</span></div><p>Booking.com, Expedia y más a través de Nobeds. Solo se envía lo que cambia.</p></div>
+     <div class="group"><h3>Pagos</h3><div class="chips"><span class="chip">Stripe</span></div><p>Reserva, saldo pendiente, extras y ampliación de estancia. Reembolsos desde Betan: <span class="soon">Próximamente</span></p></div>
+     <div class="group"><h3>Huésped</h3><div class="chips"><span class="chip">WhatsApp Business</span><span class="chip">Email</span><span class="chip">QR de habitación</span></div></div>
+     <div class="group"><h3>Administración</h3><div class="chips"><span class="chip">SES Hospedajes</span></div><p>Ministerio del Interior, RD 933/2021.</p></div>
+     <div class="group"><h3>Marketing</h3><div class="chips"><span class="chip">Google Ads</span><span class="chip">Google Places</span></div><p>Conversiones medidas desde el anuncio hasta la reserva.</p></div>
+    </div>
+    <div class="legend"><span class="chip">Conectado hoy</span><span class="chip later">En preparación</span></div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<section id="ia" aria-labelledby="t-ia" style="padding-top:0">
+ <div class="wrap">
+  <div class="head">
+   <h2 id="t-ia">Pregúntale a tu hotel. Por escrito o en voz alta.</h2>
+   <p class="lead">El agente de Betan lee y escribe en los datos reales del hotel con 84 herramientas. Propone y tú confirmas: nada se ejecuta sin tu sí, y el hotel funciona igual sin él.</p>
+  </div>
+  <div class="ai">
+   <div class="panel">
+    <div class="panel-h">Agente Betan<small>Recepción, turno de tarde</small></div>
+    <div class="chat">
+     <div class="msg u">¿Cuántas llegadas tenemos mañana y quién viene tarde?</div>
+     <div class="msg a"><span class="tool">consultar_llegadas</span><br>Mañana llegan 7 reservas. Dos avisan de llegada después de las 22:00: Ortega (101) y García (103). Las dos tienen el check-in online hecho.</div>
+     <div class="msg u">Sube la doble estándar del sábado un 10 %.</div>
+     <div class="msg a"><span class="tool">cambiar_precio</span><br>La doble estándar del sábado 17 pasaría de 92 € a 101 €. ¿Lo confirmo?
+      <div class="confirm" aria-hidden="true"><span>Sí</span><span>No</span></div></div>
+    </div>
+   </div>
+   <div class="ai-side">
+    <div class="panel voice">
+     <div class="mic"><svg aria-hidden="true"><use href="#i-mic"/></svg></div>
+     <div><b>Di «Betan» y habla</b><p>La app Android responde a su nombre y contesta en una frase, aunque estés subiendo toallas.</p>
+      <div class="wave" aria-hidden="true"><i style="height:35%"></i><i style="height:70%"></i><i style="height:100%"></i><i style="height:55%"></i><i style="height:85%"></i><i style="height:40%"></i><i style="height:65%"></i><i style="height:30%"></i><i style="height:75%"></i><i style="height:45%"></i><i style="height:60%"></i><i style="height:25%"></i></div></div>
+    </div>
+    <div class="panel brief">
+     <div class="brief-t">Briefing de la mañana<small>solo lectura</small></div>
+     <ul>
+      <li><span>Ocupación de la semana</span><b>81 %<span class="up">+6 puntos frente a 2025</span></b></li>
+      <li><span>Reglas de precio</span><b>2 funcionan, 1 a revisar</b></li>
+      <li><span>Competidores a 14 días</span><b>Uno agotado el sábado</b></li>
+      <li><span>Quejas abiertas</span><b>1, ruido en la 203</b></li>
+     </ul>
+    </div>
+   </div>
+  </div>
+  <div class="facts">
+   <div><h3>Gerente, no chatbot</h3><p>Trabaja con tus objetivos de ocupación, cuestiona bloqueos y agrupa incidencias por su causa.</p></div>
+   <div><h3>Permisos por rol</h3><p>Actúa con los permisos de quien le habla. Los importes de facturación solo los ve dirección.</p></div>
+   <div><h3>Tareas programadas</h3><p>«Cada dos días recuerda esto al equipo» y lo hace, en la franja horaria que digas.</p></div>
+   <div><h3>Borradores, no envíos</h3><p>Los mensajes que sugiere para tu equipo esperan tu aprobación antes de salir.</p></div>
+  </div>
+ </div>
+</section>
+
+<section class="band" id="precios" aria-labelledby="t-rev">
+ <div class="wrap">
+  <div class="head">
+   <h2 id="t-rev">Precios que se mueven solos y te dicen si ha funcionado.</h2>
+   <p class="lead">Ocho reglas revisan tus tarifas cada 30 minutos sobre tu tarifa base. Después, Betan compara las reservas antes y después de cada cambio y te da un veredicto.</p>
+  </div>
+  <div class="rev">
+   <ul class="rules">
+    <li><b>Poca disponibilidad</b><span>Sube cuando quedan pocas habitaciones.</span></li>
+    <li><b>Lead time</b><span>Ajusta el día en que suelen entrar tus reservas.</span></li>
+    <li><b>Mínimos locales</b><span>Estimula los valles de los próximos 60 días.</span></li>
+    <li><b>Parada de reservas</b><span>Baja por escalones si pasan horas sin ventas.</span></li>
+    <li><b>Reservas seguidas</b><span>Sube si entran varias en pocos minutos.</span></li>
+    <li><b>Competidores</b><span>Se coloca bajo el más barato si tienes huecos.</span></li>
+    <li><b>Venta de superiores</b><span>Con la base agotada, empuja la superior.</span></li>
+    <li><b>Liquidación nocturna</b><span>Rebaja por horas para llenar la última.</span></li>
+   </ul>
+   <div class="audit">
+    <div class="panel-h">Informe «Efecto reglas»<small>datos de ejemplo</small></div>
+    <table>
+     <thead><tr><th scope="col">Regla</th><th scope="col"><span class="sr">Reservas </span>Antes y después</th><th scope="col">Veredicto</th></tr></thead>
+     <tbody>
+      <tr><td>Poca disponibilidad</td><td class="n">4 y 5</td><td><span class="vd ok">Funciona</span></td></tr>
+      <tr><td>Lead time</td><td class="n">6 y 6</td><td><span class="vd neu">Sin efecto</span></td></tr>
+      <tr><td>Liquidación nocturna</td><td class="n">3 y 3</td><td><span class="vd bad">Perjudica</span></td></tr>
+     </tbody>
+    </table>
+    <p class="advice"><b>Consejo:</b> rebajas sin más reservas, se está regalando precio. Reduce el descuento de la liquidación nocturna.</p>
+    <div class="comp">
+     <div><small>Tu doble, sábado</small><b>92 €</b></div>
+     <div><small>Competidor A</small><b>98 €</b></div>
+     <div><small>Competidor B</small><b>Agotado</b></div>
+    </div>
+   </div>
+  </div>
+  <p class="fine">Una sola regla decide cada fecha, un precio cambiado a mano se respeta y las bajadas tienen suelo. Son reglas transparentes, no un sistema de previsión de demanda. Los precios de la competencia se leen de sus motores de reserva (hoy Paraty y Cloudbeds).</p>
+  <div class="recover">
+   <div><h3>Carritos abandonados</h3><p>Email y WhatsApp con enlace y descuento escalonado a quien no terminó de pagar.</p></div>
+   <div><h3>Cancelaciones</h3><p>Ofrece volver a reservar con descuento sobre el precio de hoy de esa estancia.</p></div>
+   <div><h3>Descuento con contador</h3><p>Una oferta por tiempo limitado al dejar nombre y email, una vez por persona.</p></div>
+  </div>
+ </div>
+</section>
+
+<section id="cumplimiento" aria-labelledby="t-cum">
+ <div class="wrap ses">
+  <div class="panel">
+   <div class="panel-h">Parte de viajeros, reserva 4821<small>2 huéspedes</small></div>
+   <ul class="checks">
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg><div>Documento del titular<span>DNI leído con IA, letra de control correcta</span></div></li>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg><div>Domicilio y municipio<span>Código postal y municipio INE coinciden</span></div></li>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg><div>Contrato firmado<span>Firma en el móvil con fecha, hora e IP</span></div></li>
+    <li class="warn"><svg aria-hidden="true"><use href="#i-warn"/></svg><div>Acompañante adulto<span>Falta la fecha de nacimiento. El check-in queda en espera.</span></div></li>
+   </ul>
+   <div class="ses-foot"><small>Se envía a SES Hospedajes desde la ficha de la reserva</small><span class="btn primary small" aria-hidden="true">Enviar a SES</span></div>
+  </div>
+  <div>
+   <h2 id="t-cum">El parte de viajeros, bien a la primera.</h2>
+   <p class="lead">Betan revisa cada dato antes de que salga hacia el Ministerio del Interior y no deja completar un check-in con campos pendientes.</p>
+   <div class="ses-list">
+    <div><h3>Escaneo de DNI y pasaporte con IA</h3><p>Una foto rellena los campos. Recepción revisa y guarda; la imagen no se almacena.</p></div>
+    <div><h3>Controles con rastro</h3><p>Saltarse un paso exige un motivo escrito que queda registrado con nombre y hora.</p></div>
+    <div><h3>RGPD de serie</h3><p>Anonimización de huéspedes y consentimiento de email registrado.</p></div>
+   </div>
+   <div class="soonbox"><span class="soon">Próximamente</span>Envío automático con aviso de plazo, VERIFACTU y Mossos d'Esquadra.</div>
+  </div>
+ </div>
+</section>
+
+<section id="multihotel" aria-labelledby="t-multi" style="padding-top:0">
+ <div class="wrap multi">
+  <div>
+   <h2 id="t-multi">Varios hoteles, un solo panel.</h2>
+   <p class="lead">Si llevas más de un establecimiento, pasa de uno a otro sin cerrar sesión y mira cómo va cada uno de un vistazo.</p>
+   <ul>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg>Datos, tarifas, cerraduras y usuarios separados por hotel.</li>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg>Cada empleado ve solo los hoteles en los que trabaja.</li>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg>Un único acceso para dirección, con el resumen de todos.</li>
+   </ul>
+  </div>
+  <div class="panel">
+   <div class="switch" aria-hidden="true"><span class="on">Todos</span><span>Hotel Betania</span><span>[PLACEHOLDER] Hostal</span><span>[PLACEHOLDER] Aparthotel</span></div>
+   <table class="hotels">
+    <caption class="sr">Ejemplo del resumen de varios hoteles</caption>
+    <thead><tr><th scope="col">Hotel</th><th scope="col">Ocupación hoy</th><th scope="col">Llegadas</th><th scope="col" class="hide-s">Pendiente</th></tr></thead>
+    <tbody>
+     <tr><td>Hotel Betania</td><td class="n">86 %<span class="occ"><i style="width:86%"></i></span></td><td class="n">7</td><td class="hide-s">Nada</td></tr>
+     <tr><td>[PLACEHOLDER] Hostal</td><td class="n">72 %<span class="occ"><i style="width:72%"></i></span></td><td class="n">4</td><td class="hide-s warn-t">1 parte por validar</td></tr>
+     <tr><td>[PLACEHOLDER] Aparthotel</td><td class="n">64 %<span class="occ"><i style="width:64%"></i></span></td><td class="n">9</td><td class="hide-s">Nada</td></tr>
+    </tbody>
+   </table>
+  </div>
+ </div>
+</section>
+
+<section id="planes" aria-labelledby="t-pl" style="background:var(--sunk)">
+ <div class="wrap">
+  <div class="head">
+   <h2 id="t-pl">Planes según lo que tu hotel necesita.</h2>
+   <p class="lead">Precio a medida según habitaciones y módulos. En la demo te damos un presupuesto cerrado. Sin comisión por reserva directa.</p>
+  </div>
+  <div class="plans">
+   <article class="plan"><h3>Esencial</h3><p class="for">Para dejar el Excel y el programa antiguo.</p>
+    <div class="price">A medida<small class="ph">[PLACEHOLDER] precio orientativo</small></div>
+    <ul><li><svg aria-hidden="true"><use href="#i-check"/></svg>Motor de reservas y widget</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Planning, facturación y caja</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Limpieza y desayunos</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>SES Hospedajes con validación</li></ul>
+    <a class="btn" href="#contacto" data-plan="Esencial">Pedir demo de Esencial</a></article>
+   <article class="plan hl"><span class="tag">El más pedido</span><h3>Pro</h3><p class="for">Para vender más directo y cobrar mejor cada noche.</p>
+    <div class="price">A medida<small class="ph">[PLACEHOLDER] precio orientativo</small></div>
+    <ul><li><svg aria-hidden="true"><use href="#i-check"/></svg>Todo lo de Esencial</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Channel manager</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Precios dinámicos y competidores</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Portal del huésped y QR de habitación</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Recuperación de carritos y cancelaciones</li></ul>
+    <a class="btn primary" href="#contacto" data-plan="Pro">Pedir demo de Pro</a></article>
+   <article class="plan"><h3>IA + Cerraduras</h3><p class="for">Para llegadas a cualquier hora sin recepción de noche.</p>
+    <div class="price">A medida<small class="ph">[PLACEHOLDER] precio orientativo</small></div>
+    <ul><li><svg aria-hidden="true"><use href="#i-check"/></svg>Todo lo de Pro</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Agente IA por chat y voz</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Check-in autónomo con TTLock y ZKTeco</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Escaneo de DNI con IA</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>WhatsApp Business automático</li></ul>
+    <a class="btn" href="#contacto" data-plan="IA + Cerraduras">Pedir demo de IA + Cerraduras</a></article>
+  </div>
+  <div class="group-note">
+   <p><b>¿Llevas varios hoteles?</b> Cualquier plan funciona para varios establecimientos desde un solo panel. Las cerraduras se presupuestan aparte según tu instalación.</p>
+   <a class="btn small" href="#contacto" data-plan="Varios hoteles">Hablar de mi grupo</a>
+  </div>
+ </div>
+</section>
+
+<section id="faq" aria-labelledby="t-faq">
+ <div class="wrap faq-grid">
+  <div>
+   <h2 id="t-faq">Preguntas frecuentes</h2>
+   <p class="lead">¿No ves la tuya? Escríbenos y te contesta una persona.</p>
+  </div>
+  <div>
+   <details><summary>¿Cobráis comisión por las reservas?</summary><p>No. Las reservas que entran por tu web o tu widget no pagan comisión a Betan. Solo pagas las tasas de Stripe por procesar el cobro.</p></details>
+   <details><summary>¿Puedo seguir vendiendo en Booking y otras plataformas?</summary><p>Sí. Betan sincroniza precios y disponibilidad con Nobeds (Booking.com, Expedia y más), FrontDesk Master y Jumbo, enviando solo lo que cambia.</p></details>
+   <details><summary>¿Qué cerraduras son compatibles?</summary><p>Hoy TTLock (códigos y tarjetas) y ZKTeco para control de accesos. Salto, Nuki y Dormakaba están en preparación. Las cerraduras mantienen su plan B: llave mecánica y tarjeta maestra.</p></details>
+   <details><summary>¿Envía el parte de viajeros?</summary><p>Betan prepara el parte, lo valida y lo manda a SES Hospedajes desde la ficha de la reserva con un clic; después puedes consultar su estado. El envío automático con aviso de plazo llegará próximamente.</p></details>
+   <details><summary>¿Y si no me fío de la IA?</summary><p>La IA no decide nada sola: propone y tú confirmas cada acción. Respeta los permisos de cada usuario y no hace cambios masivos. Si no la quieres, el sistema funciona igual sin ella.</p></details>
+   <details><summary>¿Puedo gestionar varios hoteles?</summary><p>Sí. Cada hotel tiene sus datos, tarifas, cerraduras y usuarios separados, y dirección los ve todos desde un mismo panel.</p></details>
+   <details><summary>¿Mis datos son míos?</summary><p>Sí. Los listados se exportan a CSV cuando quieras, y las cuentas de Stripe, WhatsApp y cerraduras están a tu nombre. Firmamos contrato de encargado del tratamiento. [PLACEHOLDER: ubicación de los servidores]</p></details>
+   <details><summary>¿Cuánto tarda la implantación?</summary><p>Depende del tamaño del hotel y de las integraciones. Traemos tus reservas desde FrontDesk Master o Nobeds sin perder historial. [PLACEHOLDER: plazo medio de implantación]</p></details>
+  </div>
+ </div>
+</section>
+
+<section class="band contact" id="contacto" aria-labelledby="t-con">
+ <div class="wrap">
+  <div>
+   <h2 id="t-con">Te lo enseñamos con tu hotel delante.</h2>
+   <p class="lead">Cuéntanos cómo trabajáis hoy y preparamos una demo de 15 minutos con tus casos reales.</p>
+   <ul>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg>Respuesta en uno o dos días laborables.</li>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg>Demo en vivo con una cerradura real.</li>
+    <li><svg aria-hidden="true"><use href="#i-check"/></svg>Presupuesto cerrado, sin compromiso.</li>
+   </ul>
+  </div>
+  <form id="form" novalidate>
+   <div id="fields" style="display:contents"></div>
+   <div class="form-row">
+    <button class="btn primary" type="submit" data-mode="mailto">Enviar por email</button>
+    <button class="btn" type="submit" data-mode="whatsapp">Escribir por WhatsApp</button>
+   </div>
+   <p id="fmsg" role="status" aria-live="polite"></p>
+  </form>
+ </div>
+</section>
+</main>
+
+<footer>
+ <div class="wrap">
+  <div class="cols">
+   <div><a class="brand" href="#top"><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#1f4fd8"/><path d="M21 14h13a10 10 0 0 1 5 18.6A11 11 0 0 1 36 50H21z" fill="none" stroke="#f4c430" stroke-width="6" stroke-linejoin="round"/></svg>Betan</a><p>Sistema de gestión con IA para hoteles independientes. Nacido en Hotel Betania, Benalmádena.</p></div>
+   <div><h2>Producto</h2><ul><li><a href="#como">Cómo funciona</a></li><li><a href="#integraciones">Integraciones</a></li><li><a href="#ia">Agente IA</a></li><li><a href="#precios">Precios dinámicos</a></li></ul></div>
+   <div><h2>Más</h2><ul><li><a href="#cumplimiento">SES Hospedajes</a></li><li><a href="#multihotel">Varios hoteles</a></li><li><a href="#planes">Planes</a></li><li><a href="#faq">Preguntas</a></li></ul></div>
+   <div><h2>Legal</h2><ul><li><a href="#">Aviso legal [PLACEHOLDER]</a></li><li><a href="#">Privacidad [PLACEHOLDER]</a></li><li><a href="#">Cookies [PLACEHOLDER]</a></li></ul></div>
+  </div>
+  <div class="legal">[PLACEHOLDER: razón social, NIF/CIF, domicilio y email de contacto]. &copy; <span id="year">2026</span> Betan. Las marcas mencionadas pertenecen a sus propietarios.</div>
+ </div>
+</footer>
+
+<script>
+// ==== CONFIGURACIÓN (edita aquí) ====
+const CONFIG = {
+  email: "hola@betan.example.com",            // [PLACEHOLDER]
+  whatsapp: "34600000000",                     // [PLACEHOLDER] número sin + ni espacios
+  subject: "Quiero una demo de Betan",
+  fields: [
+    {name:"nombre", label:"Tu nombre", type:"text", required:true, autocomplete:"name"},
+    {name:"email", label:"Email", type:"email", required:true, autocomplete:"email"},
+    {name:"hotel", label:"Hotel", type:"text", required:true, autocomplete:"organization"},
+    {name:"habitaciones", label:"Habitaciones", type:"number", min:1},
+    {name:"telefono", label:"Teléfono (opcional)", type:"tel", autocomplete:"tel"},
+    {name:"plan", label:"Plan que te interesa", type:"select", options:["Aún no lo sé","Esencial","Pro","IA + Cerraduras","Varios hoteles"]},
+    {name:"mensaje", label:"¿Qué te gustaría resolver?", type:"textarea", full:true}
+  ]
+};
+// ====================================
+(function(){
+  const root=document.documentElement, KEY="betan-theme";
+  document.getElementById("theme").addEventListener("click",()=>{
+    const dark = root.dataset.theme==="dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme:dark)").matches);
+    root.dataset.theme = dark ? "light" : "dark";
+    try{localStorage.setItem(KEY,root.dataset.theme)}catch(e){}
+  });
+  document.getElementById("year").textContent=new Date().getFullYear();
+
+  // formulario
+  const box=document.getElementById("fields"), form=document.getElementById("form"), msg=document.getElementById("fmsg");
+  CONFIG.fields.forEach(f=>{
+    const w=document.createElement("div"); w.className="field"+(f.full?" full":"");
+    const l=document.createElement("label"); l.htmlFor="f-"+f.name; l.textContent=f.label;
+    let el;
+    if(f.type==="select"){el=document.createElement("select"); f.options.forEach(o=>{const op=document.createElement("option"); op.textContent=o; el.appendChild(op)});}
+    else if(f.type==="textarea"){el=document.createElement("textarea");}
+    else{el=document.createElement("input"); el.type=f.type; if(f.min) el.min=f.min;}
+    el.id="f-"+f.name; el.name=f.name; if(f.required) el.required=true; if(f.autocomplete) el.autocomplete=f.autocomplete;
+    w.append(l,el); box.appendChild(w);
+  });
+  document.querySelectorAll("[data-plan]").forEach(a=>a.addEventListener("click",()=>{
+    const s=document.getElementById("f-plan"); if(s) s.value=a.dataset.plan;
+  }));
+  let mode="mailto";
+  form.querySelectorAll("button[type=submit]").forEach(b=>b.addEventListener("click",()=>mode=b.dataset.mode));
+  form.addEventListener("submit",e=>{
+    e.preventDefault();
+    const bad=[...form.elements].find(x=>x.required&&!x.value.trim());
+    if(bad){msg.textContent="Falta rellenar: "+form.querySelector('label[for="'+bad.id+'"]').textContent+".";bad.focus();return;}
+    const body=CONFIG.fields.map(f=>f.label+": "+(form.elements[f.name].value||"-")).join("\n");
+    if(mode==="whatsapp") window.open("https://wa.me/"+CONFIG.whatsapp+"?text="+encodeURIComponent(CONFIG.subject+"\n\n"+body),"_blank","noopener");
+    else location.href="mailto:"+CONFIG.email+"?subject="+encodeURIComponent(CONFIG.subject)+"&body="+encodeURIComponent(body);
+    msg.textContent="Abriendo tu aplicación de "+(mode==="whatsapp"?"WhatsApp":"correo")+". Si no se abre, escríbenos a "+CONFIG.email+".";
+  });
+
+  // único momento animado: la noche del hero se completa paso a paso
+  const night=document.getElementById("night"), rows=[...night.querySelectorAll("li")];
+  if(matchMedia("(prefers-reduced-motion:reduce)").matches){rows.forEach(r=>r.classList.add("on"));night.classList.add("open");return;}
+  let i=0; const t=setInterval(()=>{ if(i<rows.length) rows[i++].classList.add("on"); else {clearInterval(t); night.classList.add("open");} },520);
+})();
+</script>
+</body>
+</html>

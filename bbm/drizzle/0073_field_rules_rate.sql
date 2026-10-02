@@ -1,0 +1,3 @@
+INSERT INTO "reservation_field_rules" ("field_key", "label", "allowed_roles", "allowed_channel_ids") VALUES
+  ('rate', 'Tarifa', '[]', '[]')
+ON CONFLICT (field_key) DO NOTHING;
