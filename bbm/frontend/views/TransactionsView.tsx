@@ -740,12 +740,13 @@ export default function TransactionsView() {
             {loading && <div className="loading" style={{ padding: 20 }}>Cargando…</div>}
             {error   && <div className="empty" style={{ padding: 20, color: 'var(--red)' }}>{error}</div>}
             {!loading && !error && (
-              <table>
+              <div className="table-wrap">
+              <table className="data-table">
                 <thead><tr>
                   <th>Fecha</th><th>Reserva</th><th>Huésped</th><th>Habitación</th>
-                  <th>OTA</th><th>Forma de pago</th><th>Caja</th>
+                  <th>OTA</th><th>Forma de pago</th><th>Caja</th><th>Nº de pedido</th>
                   <th style={{ textAlign: 'right' }}>Importe</th>
-                  <th>Facturada</th><th>Usuario</th><th>Descripción</th>
+                  <th>Facturada</th><th>Usuario</th><th>Cobrado en otro turno</th><th>Descripción</th>
                   {admin && <th></th>}
                 </tr></thead>
                 <tbody>
@@ -775,6 +776,9 @@ export default function TransactionsView() {
                         </td>
                         <td><MethodBadge method={tx.paymentMethod} methods={methods} /></td>
                         <td style={{ fontSize: 12, color: 'var(--text2)' }}>{tx.financialAccount?.name ?? '—'}</td>
+                        <td style={{ fontSize: 12, color: 'var(--text2)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                          {tx.cardOperationNumber ?? '—'}
+                        </td>
                         <td style={{ textAlign: 'right', fontWeight: 700, fontFamily: 'monospace', fontSize: 13 }}>{fmt(tx.amount)}</td>
                         <td>
                           {isInv
@@ -783,6 +787,13 @@ export default function TransactionsView() {
                         </td>
                         <td style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
                           {tx.createdByUser ? `${tx.createdByUser.firstName} ${tx.createdByUser.lastName}` : (tx.user ?? '—')}
+                        </td>
+                        <td style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
+                          {tx.paidByUser
+                            ? <span title={tx.collectedAt ? fmtDateTime(tx.collectedAt) : undefined}>
+                                Sí — {tx.paidByUser.firstName} {tx.paidByUser.lastName}{tx.collectedAt ? ` (${fmtDateTime(tx.collectedAt)})` : ''}
+                              </span>
+                            : '—'}
                         </td>
                         <td style={{ fontSize: 12, color: 'var(--text2)', maxWidth: 200 }}>
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
@@ -796,12 +807,13 @@ export default function TransactionsView() {
                     )
                   })}
                   {rows.length === 0 && (
-                    <tr><td colSpan={admin ? 12 : 11} style={{ textAlign: 'center', padding: 24, color: 'var(--text2)' }}>
+                    <tr><td colSpan={admin ? 14 : 13} style={{ textAlign: 'center', padding: 24, color: 'var(--text2)' }}>
                       Sin transacciones para los filtros seleccionados
                     </td></tr>
                   )}
                 </tbody>
               </table>
+              </div>
             )}
             {totalPages > 1 && (
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '12px 0 4px' }}>

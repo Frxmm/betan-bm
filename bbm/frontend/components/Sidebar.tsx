@@ -7,6 +7,8 @@ interface NavItem {
   icon: string
   label: string
   allow?: (u: AuthUser | null) => boolean
+  /** Módulo del tenant requerido (property.features[feature]); sin él el enlace no se muestra. */
+  feature?: string
 }
 
 const notLimpieza = (u: AuthUser | null) => !hasRole(u, 'limpieza')
@@ -18,21 +20,22 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/arrivals',       icon: '↓',  label: 'Entradas' },
   { to: '/departures',     icon: '↑',  label: 'Salidas' },
   { to: '/housekeeping',   icon: '🧹', label: 'Housekeeping' },
-  { to: '/laundry',        icon: '👕', label: 'Lavandería' },
+  { to: '/live-map',       icon: '🗺️', label: 'Tiempo Real',    feature: 'liveMap' },
+  { to: '/laundry',        icon: '👕', label: 'Lavandería',     feature: 'laundry' },
   { to: '/id-scan',       icon: '📷',  label: 'Escaneo IDs',    allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
   { to: '/reservations',   icon: '☰',  label: 'Reservas',      allow: notLimpieza },
   { to: '/guests',         icon: '👤', label: 'Huéspedes',     allow: notLimpieza },
   { to: '/billing',        icon: '€',  label: 'Facturación',   allow: onlyDireccion },
   { to: '/invoices',       icon: '🧾', label: 'Facturas',      allow: notLimpieza },
   { to: '/transactions',   icon: '⇄',  label: 'Transacciones', allow: notLimpieza },
-  { to: '/cash-drawer',    icon: '💶', label: 'Caja de cambio', allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
+  { to: '/cash-drawer',    icon: '💶', label: 'Caja de cambio', feature: 'cashDrawer', allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
   { to: '/rates',          icon: '₯',  label: 'Tarifas',       allow: onlyDireccion },
   { to: '/rates/calendar', icon: '▦',  label: 'Precios',       allow: notLimpieza },
-  { to: '/nobeds',         icon: '⇆',  label: 'Nobeds',        allow: onlyDireccion },
+  { to: '/nobeds',         icon: '⇆',  label: 'Nobeds',        feature: 'nobeds', allow: onlyDireccion },
   { to: '/extras',         icon: '✚',   label: 'Extras',          allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
-  { to: '/ses',            icon: '🪪',  label: 'SES Hospedajes', allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
+  { to: '/ses',            icon: '🪪',  label: 'SES Hospedajes', feature: 'ses', allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
   { to: '/notifications',  icon: '🔔', label: 'Notificaciones', allow: onlyDireccion },
-  { to: '/zkteco',        icon: '🔑',  label: 'Accesos',         allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
+  { to: '/zkteco',        icon: '🔑',  label: 'Accesos',         feature: 'zkteco', allow: (u) => canManage(u) || hasRole(u, 'recepcion') },
   { to: '/ai-debug',      icon: '🐛',  label: 'AI Debug',       allow: onlyDireccion },
   { to: '/rooms',          icon: '🛏',  label: 'Habitaciones' },
   { to: '/reports',        icon: '📊', label: 'Informes',       allow: notLimpieza },
@@ -56,7 +59,8 @@ export default function Sidebar({ open, onClose }: Props) {
   const { property } = useProperty()
   const { user, realUser, viewAsRole, setViewAsRole, logout } = useAuth()
 
-  const visible = NAV_ITEMS.filter(item => !item.allow || item.allow(user))
+  const visible = NAV_ITEMS.filter(item =>
+    (!item.allow || item.allow(user)) && (!item.feature || property.features?.[item.feature] === true))
 
   return (
     <aside id="sidebar" className={open ? 'sidebar-open' : ''}>

@@ -39,6 +39,8 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     extras: {
       title: '✨ Añadir extras', payError: 'Error al iniciar el pago', totalLabel: 'Total extras', payButton: 'Pagar {{total}}',
+      nightsBreakdown: '× {{count}} noches restantes = {{total}}',
+      personNightsBreakdown: '× {{people}} pers. × {{count}} noches restantes = {{total}}',
     },
     extendStay: {
       title: '🌙 Ampliar tu estancia', intro: 'Elige cuántas noches más quieres quedarte.',
@@ -54,7 +56,7 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     reservation: {
       detailTitle: 'Detalle de reserva', idLabel: 'Reserva #{{id}}', onlineCheckinBadge: '✓ Check-in online',
-      arrival: 'Llegada', departure: 'Salida', nights: 'Noches', room: 'Habitación', rate: 'Tarifa',
+      arrival: 'Llegada', departure: 'Salida', nights: 'Noches', room: 'Habitación', roomsTotal: '{{n}} habitaciones: {{codes}}', rate: 'Tarifa',
       paid: 'Pagado', pending: 'Pendiente', pendingPaymentTitle: '💳 Pago pendiente',
       pendingPaymentInfoStandalone: 'Tienes un importe pendiente de {{amount}}. Puedes pagarlo de forma segura con tarjeta.',
       pendingPaymentInfoWidget: 'Tienes {{amount}} pendiente de pago.',
@@ -135,6 +137,8 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     extras: {
       title: '✨ Add extras', payError: 'Error starting the payment', totalLabel: 'Extras total', payButton: 'Pay {{total}}',
+      nightsBreakdown: '× {{count}} nights left = {{total}}',
+      personNightsBreakdown: '× {{people}} guests × {{count}} nights left = {{total}}',
     },
     extendStay: {
       title: '🌙 Extend your stay', intro: 'Choose how many more nights you want to stay.',
@@ -150,7 +154,7 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     reservation: {
       detailTitle: 'Booking details', idLabel: 'Booking #{{id}}', onlineCheckinBadge: '✓ Online check-in',
-      arrival: 'Check-in', departure: 'Check-out', nights: 'Nights', room: 'Room', rate: 'Rate',
+      arrival: 'Check-in', departure: 'Check-out', nights: 'Nights', room: 'Room', roomsTotal: '{{n}} rooms: {{codes}}', rate: 'Rate',
       paid: 'Paid', pending: 'Outstanding', pendingPaymentTitle: '💳 Pending payment',
       pendingPaymentInfoStandalone: 'You have an outstanding amount of {{amount}}. You can pay it securely by card.',
       pendingPaymentInfoWidget: 'You have {{amount}} outstanding.',
@@ -231,6 +235,8 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     extras: {
       title: '✨ Ajouter des extras', payError: 'Erreur lors du démarrage du paiement', totalLabel: 'Total extras', payButton: 'Payer {{total}}',
+      nightsBreakdown: '× {{count}} nuits restantes = {{total}}',
+      personNightsBreakdown: '× {{people}} pers. × {{count}} nuits restantes = {{total}}',
     },
     extendStay: {
       title: '🌙 Prolonger votre séjour', intro: 'Choisissez combien de nuits supplémentaires vous souhaitez rester.',
@@ -246,7 +252,7 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     reservation: {
       detailTitle: 'Détails de la réservation', idLabel: 'Réservation #{{id}}', onlineCheckinBadge: '✓ Check-in en ligne',
-      arrival: 'Arrivée', departure: 'Départ', nights: 'Nuits', room: 'Chambre', rate: 'Tarif',
+      arrival: 'Arrivée', departure: 'Départ', nights: 'Nuits', room: 'Chambre', roomsTotal: '{{n}} chambres : {{codes}}', rate: 'Tarif',
       paid: 'Payé', pending: 'En attente', pendingPaymentTitle: '💳 Paiement en attente',
       pendingPaymentInfoStandalone: 'Vous avez un montant en attente de {{amount}}. Vous pouvez le payer en toute sécurité par carte.',
       pendingPaymentInfoWidget: 'Vous avez {{amount}} en attente de paiement.',
@@ -327,6 +333,8 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     extras: {
       title: '✨ Extras hinzufügen', payError: 'Fehler beim Starten der Zahlung', totalLabel: 'Extras gesamt', payButton: '{{total}} bezahlen',
+      nightsBreakdown: '× {{count}} verbleibende Nächte = {{total}}',
+      personNightsBreakdown: '× {{people}} Pers. × {{count}} verbleibende Nächte = {{total}}',
     },
     extendStay: {
       title: '🌙 Aufenthalt verlängern', intro: 'Wählen Sie, wie viele Nächte Sie länger bleiben möchten.',
@@ -342,7 +350,7 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     reservation: {
       detailTitle: 'Buchungsdetails', idLabel: 'Buchung #{{id}}', onlineCheckinBadge: '✓ Online-Check-in',
-      arrival: 'Anreise', departure: 'Abreise', nights: 'Nächte', room: 'Zimmer', rate: 'Tarif',
+      arrival: 'Anreise', departure: 'Abreise', nights: 'Nächte', room: 'Zimmer', roomsTotal: '{{n}} Zimmer: {{codes}}', rate: 'Tarif',
       paid: 'Bezahlt', pending: 'Ausstehend', pendingPaymentTitle: '💳 Ausstehende Zahlung',
       pendingPaymentInfoStandalone: 'Sie haben einen ausstehenden Betrag von {{amount}}. Sie können sicher per Karte bezahlen.',
       pendingPaymentInfoWidget: 'Sie haben {{amount}} ausstehend.',
@@ -423,6 +431,8 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     extras: {
       title: '✨ Aggiungi extra', payError: 'Errore nell\'avvio del pagamento', totalLabel: 'Totale extra', payButton: 'Paga {{total}}',
+      nightsBreakdown: '× {{count}} notti rimanenti = {{total}}',
+      personNightsBreakdown: '× {{people}} pers. × {{count}} notti rimanenti = {{total}}',
     },
     extendStay: {
       title: '🌙 Estendi il tuo soggiorno', intro: 'Scegli quante notti in più vuoi restare.',
@@ -438,7 +448,7 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     reservation: {
       detailTitle: 'Dettagli prenotazione', idLabel: 'Prenotazione #{{id}}', onlineCheckinBadge: '✓ Check-in online',
-      arrival: 'Arrivo', departure: 'Partenza', nights: 'Notti', room: 'Camera', rate: 'Tariffa',
+      arrival: 'Arrivo', departure: 'Partenza', nights: 'Notti', room: 'Camera', roomsTotal: '{{n}} camere: {{codes}}', rate: 'Tariffa',
       paid: 'Pagato', pending: 'Da saldare', pendingPaymentTitle: '💳 Pagamento in sospeso',
       pendingPaymentInfoStandalone: 'Hai un importo in sospeso di {{amount}}. Puoi pagarlo in sicurezza con carta.',
       pendingPaymentInfoWidget: 'Hai {{amount}} da saldare.',
@@ -519,6 +529,8 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     extras: {
       title: '✨ Додати послуги', payError: 'Помилка при початку оплати', totalLabel: 'Разом за послуги', payButton: 'Оплатити {{total}}',
+      nightsBreakdown: '× {{count}} ночей залишилось = {{total}}',
+      personNightsBreakdown: '× {{people}} ос. × {{count}} ночей залишилось = {{total}}',
     },
     extendStay: {
       title: '🌙 Продовжити проживання', intro: 'Оберіть, на скільки ночей більше ви хочете залишитися.',
@@ -534,7 +546,7 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     reservation: {
       detailTitle: 'Деталі бронювання', idLabel: 'Бронювання #{{id}}', onlineCheckinBadge: '✓ Онлайн реєстрація',
-      arrival: 'Заїзд', departure: 'Виїзд', nights: 'Ночей', room: 'Номер', rate: 'Тариф',
+      arrival: 'Заїзд', departure: 'Виїзд', nights: 'Ночей', room: 'Номер', roomsTotal: '{{n}} номерів: {{codes}}', rate: 'Тариф',
       paid: 'Сплачено', pending: 'Залишок', pendingPaymentTitle: '💳 Очікується оплата',
       pendingPaymentInfoStandalone: 'У вас є несплачена сума {{amount}}. Ви можете безпечно оплатити карткою.',
       pendingPaymentInfoWidget: 'У вас залишок {{amount}} до сплати.',
@@ -615,6 +627,8 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     extras: {
       title: '✨ 添加附加服务', payError: '启动付款时出错', totalLabel: '附加服务总计', payButton: '支付 {{total}}',
+      nightsBreakdown: '× 剩余 {{count}} 晚 = {{total}}',
+      personNightsBreakdown: '× {{people}} 人 × 剩余 {{count}} 晚 = {{total}}',
     },
     extendStay: {
       title: '🌙 延长住宿', intro: '选择您想多住几晚。',
@@ -630,7 +644,7 @@ export const PORTAL_I18N: Record<Lang, any> = {
     },
     reservation: {
       detailTitle: '预订详情', idLabel: '预订 #{{id}}', onlineCheckinBadge: '✓ 在线入住登记',
-      arrival: '入住', departure: '退房', nights: '晚数', room: '房间', rate: '价格方案',
+      arrival: '入住', departure: '退房', nights: '晚数', room: '房间', roomsTotal: '{{n}} 间房：{{codes}}', rate: '价格方案',
       paid: '已付款', pending: '待付款', pendingPaymentTitle: '💳 待付款',
       pendingPaymentInfoStandalone: '您有 {{amount}} 待付款。您可以使用银行卡安全支付。',
       pendingPaymentInfoWidget: '您有 {{amount}} 待付款。',

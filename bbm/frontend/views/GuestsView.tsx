@@ -489,7 +489,7 @@ export function GuestModal({ guest, onClose, onSaved, onDeleted }: {
     email:              g.email ?? '',
     phone:              g.phone ?? '',
     dateOfBirth:        g.dateOfBirth ?? '',
-    nationality:        g.nationality ?? '',
+    nationality:        (g.nationality ?? '').slice(0, 2).toUpperCase(),
     idDocType:          g.idDocType ?? '',
     idDocNumber:        g.idDocNumber ?? '',
     idDocIssueDate:     g.idDocIssueDate ?? '',

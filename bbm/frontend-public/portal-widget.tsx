@@ -14,6 +14,16 @@ function isBookingAlias(email: string) { return BOOKING_ALIAS.test((email ?? '')
 
 function fmtMoney(n: number | string) { return parseFloat(String(n)).toFixed(2).replace('.', ',') + ' €' }
 function fmtDate(d: string)      { return new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) }
+
+// Reservas con varias habitaciones (extraRoomCodes, ver GET /api/customer/
+// reservations[/:id]) — antes solo se veía la habitación principal, nunca
+// cuántas más tenía la reserva.
+function roomsLabel(d: { room?: { code: string } | null; extraRoomCodes?: string[] }, t: (k: string, vars?: Record<string, string | number>) => string): string {
+  if (!d.room) return ''
+  const extra = d.extraRoomCodes ?? []
+  if (extra.length === 0) return d.room.code
+  return t('reservation.roomsTotal', { n: 1 + extra.length, codes: [d.room.code, ...extra].join(', ') })
+}
 function fmtDateShort(d: string) { return new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }) }
 
 function getToken()  { try { return localStorage.getItem(TKEY) } catch { return null } }
@@ -299,13 +309,28 @@ function LoginWidget({ lang, onLogin }: { lang: Lang; onLogin: (t: string, e: st
 
 type ExtraItem = { id: number; title: string; description: string | null; icon: string | null; pricingType: string; maxQuantity: number; defaultPrice: string | null }
 
-function extraUnitPrice(item: ExtraItem, nights: number, people: number): number {
-  const base = parseFloat(item.defaultPrice ?? '0')
+// Noches entre hoy (hora de Madrid) y el checkout, sin contar las que ya han
+// pasado — si todavía no ha hecho check-in, es sencillamente el total de la
+// estancia (no tiene sentido restar noches futuras a una compra anticipada).
+function remainingNightsFrom(checkInDate: string, checkOutDate: string): number {
+  const todayMadrid = new Intl.DateTimeFormat('en-CA', { timeZone: branding.timezone || undefined }).format(new Date())
+  const start = todayMadrid > checkInDate ? todayMadrid : checkInDate
+  return Math.max(0, Math.round((new Date(checkOutDate + 'T12:00:00').getTime() - new Date(start + 'T12:00:00').getTime()) / 86400000))
+}
+
+// unit = precio de UNA unidad (una noche, una persona, o ambos — según
+// pricingType), NUNCA el total ya multiplicado — eso se calcula aparte para
+// no confundir "8€/noche" con "56€/noche" (ver ExtrasSection).
+function extraUnitPrice(item: ExtraItem): number {
+  return parseFloat(item.defaultPrice ?? '0')
+}
+
+function extraMultiplier(item: ExtraItem, nights: number, people: number): number {
   switch (item.pricingType) {
-    case 'per_night':        return base * nights
-    case 'per_person':       return base * people
-    case 'per_person_night': return base * people * nights
-    default:                 return base
+    case 'per_night':        return nights
+    case 'per_person':       return people
+    case 'per_person_night': return people * nights
+    default:                 return 1
   }
 }
 
@@ -326,7 +351,7 @@ function ExtrasSection({ t, reservationId, nights, people }: { t: (k: string, va
 
   const total = extras.reduce((s, e) => {
     const q = qtys[e.id] ?? 0
-    return s + (q > 0 ? extraUnitPrice(e, nights, people) * q : 0)
+    return s + (q > 0 ? extraUnitPrice(e) * extraMultiplier(e, nights, people) * q : 0)
   }, 0)
 
   const pay = async () => {
@@ -346,8 +371,10 @@ function ExtrasSection({ t, reservationId, nights, people }: { t: (k: string, va
       <div className="pw-card-title">{t('extras.title')}</div>
       {error && <div className="pw-alert pw-alert-err" style={{ marginBottom: 10 }}>{error}</div>}
       {extras.map(e => {
-        const q    = qtys[e.id] ?? 0
-        const unit = extraUnitPrice(e, nights, people)
+        const q          = qtys[e.id] ?? 0
+        const unit       = extraUnitPrice(e)
+        const multiplier = extraMultiplier(e, nights, people)
+        const lineTotal  = unit * multiplier
         return (
           <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
             {e.icon && <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>{e.icon}</span>}
@@ -360,6 +387,16 @@ function ExtrasSection({ t, reservationId, nights, people }: { t: (k: string, va
                 {e.pricingType === 'per_person' && t('common.perPerson')}
                 {e.pricingType === 'per_person_night' && t('common.perPersonNight')}
               </div>
+              {e.pricingType === 'per_night' && multiplier > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--text2)' }}>
+                  {t('extras.nightsBreakdown', { count: multiplier, total: fmtMoney(lineTotal) })}
+                </div>
+              )}
+              {e.pricingType === 'per_person_night' && multiplier > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--text2)' }}>
+                  {t('extras.personNightsBreakdown', { people, count: nights, total: fmtMoney(lineTotal) })}
+                </div>
+              )}
             </div>
             {e.maxQuantity > 1 ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -476,6 +513,7 @@ function ResDrawer({ t, id, onClose }: { t: (k: string, vars?: Record<string, st
   }
 
   const nights  = data ? Math.round((new Date(data.checkOutDate + 'T12:00:00').getTime() - new Date(data.checkInDate + 'T12:00:00').getTime()) / 86400000) : 0
+  const remainingNights = data ? remainingNightsFrom(data.checkInDate, data.checkOutDate) : 0
   const pending = data ? parseFloat(data.total) - parseFloat(data.amountPaid ?? '0') : 0
   const canPay  = data && pending > 0.01 && !['cancelled', 'no_show'].includes(data.status)
   const canCI   = data && ['confirmed', 'tentative'].includes(data.status) && !data.onlineCheckIn
@@ -514,7 +552,7 @@ function ResDrawer({ t, id, onClose }: { t: (k: string, vars?: Record<string, st
                 <div className="pw-summary-row"><span style={{ color: 'var(--text2)' }}>{t('reservation.arrival')}</span><strong>{fmtDate(data.checkInDate)}</strong></div>
                 <div className="pw-summary-row"><span style={{ color: 'var(--text2)' }}>{t('reservation.departure')}</span><strong>{fmtDate(data.checkOutDate)}</strong></div>
                 <div className="pw-summary-row"><span style={{ color: 'var(--text2)' }}>{t('reservation.nights')}</span><strong>{nights}</strong></div>
-                {data.room && <div className="pw-summary-row"><span style={{ color: 'var(--text2)' }}>{t('reservation.room')}</span><strong>{data.room.code}</strong></div>}
+                {data.room && <div className="pw-summary-row"><span style={{ color: 'var(--text2)' }}>{t('reservation.room')}</span><strong>{roomsLabel(data, t)}</strong></div>}
                 {data.rate && <div className="pw-summary-row"><span style={{ color: 'var(--text2)' }}>{t('reservation.rate')}</span><strong>{data.rate.title}</strong></div>}
                 <div className="pw-summary-row total"><span>{t('common.total')}</span><span>{fmtMoney(data.total)}</span></div>
                 {parseFloat(data.amountPaid) > 0 && (
@@ -566,7 +604,7 @@ function ResDrawer({ t, id, onClose }: { t: (k: string, vars?: Record<string, st
 
               {canAddExtras && (
                 <div style={{ marginTop: 12 }}>
-                  <ExtrasSection t={t} reservationId={id} nights={nights} people={data.people} />
+                  <ExtrasSection t={t} reservationId={id} nights={remainingNights} people={data.people} />
                 </div>
               )}
             </>
@@ -719,7 +757,7 @@ function ResCard({ lang, t, r, onClick }: { lang: Lang; t: (k: string, vars?: Re
         <div className="pw-res-dates">{fmtDateShort(r.checkInDate)} → {fmtDateShort(r.checkOutDate)}</div>
         <div className="pw-res-info">
           {nights} {plural(lang, nights, t('common.nightOne'), t('common.nightOther'))}
-          {r.room ? ` · Hab. ${r.room.code}` : ''}
+          {r.room ? ` · ${r.extraRoomCodes?.length ? roomsLabel(r, t) : `Hab. ${r.room.code}`}` : ''}
           {r.rate ? ` · ${r.rate.title}` : ''}
         </div>
         {r.onlineCheckIn && (

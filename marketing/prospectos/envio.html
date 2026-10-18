@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Envío de propuestas · Betan</title>
+<style>
+:root{--bg:#f2f5f8;--card:#fff;--ink:#0f2a43;--mut:#475a6d;--line:#d3dce5;--pri:#1f4fd8;--ok:#1a7f4b}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1826;--card:#122437;--ink:#e8eef5;--mut:#a6b5c5;--line:#24405b;--pri:#6f93ff;--ok:#4cc38a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:20px}
+h1{margin:0 0 4px;font-size:1.5rem}h2{font-size:1.1rem;margin:0 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:16px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input,textarea,select{font:inherit;color:inherit;background:transparent;border:1px solid var(--line);border-radius:8px;padding:8px;width:100%}
+textarea{min-height:190px;resize:vertical}
+button,a.b{font:inherit;font-weight:600;cursor:pointer;border:1px solid var(--ink);color:var(--ink);background:transparent;border-radius:99px;padding:6px 14px;text-decoration:none;display:inline-block;white-space:nowrap}
+button.p,a.p{background:var(--pri);border-color:var(--pri);color:#fff}
+a.off{opacity:.35;pointer-events:none}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.8rem;text-transform:uppercase;color:var(--mut)}
+.done td{opacity:.55}.mut{color:var(--mut);font-size:.9rem}.ok{color:var(--ok);font-weight:700}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:760px){.grid{grid-template-columns:1fr}}
+label{font-size:.85rem;color:var(--mut);display:block;margin:8px 0 4px}
+</style></head><body><main>
+<h1>Envío de propuestas — Betan</h1>
+<p class="mut">Cada fila genera su email y su WhatsApp ya redactados con los datos del hotel. Pulsas, se abre tu correo/WhatsApp con todo listo, y solo das a «Enviar». Luego marcas «Enviado». Todo se guarda en este navegador.</p>
+
+<div class="card"><h2>1 · Encontrar hoteles (Google Maps)</h2>
+<div class="row" id="maps"></div>
+<p class="mut">Abre la búsqueda, copia nombre, teléfono, web y email de la ficha del hotel y añádelos en el paso 3. Filtra por 12–35 habitaciones. Pocas fichas muestran email: mira su web, sección «Contacto».</p></div>
+
+<div class="card"><h2>2 · Mensajes (editables)</h2>
+<p class="mut">Variables: <code>{nombre}</code> (o «equipo» si no hay contacto), <code>{hotel}</code>, <code>{localidad}</code></p>
+<div class="grid">
+ <div><label>Asunto del email</label><input id="tSubj">
+ <label>Cuerpo del email</label><textarea id="tMail"></textarea></div>
+ <div><label>Mensaje de WhatsApp</label><textarea id="tWa"></textarea>
+ <label>Seguimiento (día +4)</label><textarea id="tFu" style="min-height:90px"></textarea></div>
+</div>
+<div class="row" style="margin-top:10px"><button id="saveT">Guardar mensajes</button><button id="resetT">Restaurar originales</button></div></div>
+
+<div class="card"><h2>3 · Prospectos</h2>
+<div class="row" style="margin-bottom:10px">
+ <input id="nHotel" placeholder="Hotel *" style="flex:2 1 160px"><input id="nContact" placeholder="Contacto (nombre)" style="flex:1 1 120px">
+ <input id="nTown" placeholder="Localidad" style="flex:1 1 110px"><input id="nMail" placeholder="Email" style="flex:2 1 160px">
+ <input id="nTel" placeholder="Teléfono / WhatsApp" style="flex:1 1 130px"><button class="p" id="add">Añadir</button>
+</div>
+<div class="row" style="margin-bottom:10px">
+ <button id="imp">Importar CSV…</button><input type="file" id="file" accept=".csv" hidden>
+ <button id="exp">Exportar CSV</button>
+ <select id="flt" style="width:auto"><option value="pend">Pendientes</option><option value="all">Todos</option><option value="done">Enviados</option></select>
+ <span class="mut" id="count"></span>
+</div>
+<div style="overflow-x:auto"><table><thead><tr><th>Hotel</th><th>Contacto</th><th>Enviar</th><th>Estado</th><th></th></tr></thead><tbody id="rows"></tbody></table></div></div>
+
+<script>
+const SEED = `hotel,contacto,localidad,email,telefono,web,habitaciones,notas
+Hotel Marina Benalmádena,,Benalmádena,,,,18,"Av. Antonio Machado 20. 18 hab. según ficha de Rumbo. SIN VERIFICAR: falta web y email oficiales."
+Hostal Jomarijo,,Fuengirola,,952464421,,,"C/ Dionisia Redondo 6. Teléfono de recepción según listado de Momondo (fijo, no WhatsApp). SIN VERIFICAR."`;
+const SENDER = {name:'Fran Rubio', phone:'658 354 600', web:'www.betanbm.com'};
+const DEF = {
+ subj:'Propuesta para {hotel}: reservas directas, parte de viajeros automático y check-in sin recepción',
+ mail:`Hola {nombre}:
+
+Soy Fran Rubio, de Benalmádena. Llevo el desarrollo del sistema con el que trabaja cada día el Hotel Betania: el huésped reserva y paga directo, hace el check-in online, el parte de SES Hospedajes se envía solo y recibe por WhatsApp el código de su habitación. Funciona en un hotel real, no es una maqueta.
+
+Estoy buscando 3 hoteles de la Costa del Sol como clientes fundadores. La propuesta para {hotel}:
+
+• Implantación completa GRATIS (configuración, motor de reservas en tu web, SES, pagos, WhatsApp, migración desde tu sistema actual, formación y 2 semanas de acompañamiento).
+• 1 mes de prueba gratis. Después, plan Pro a 99 €/mes durante 12 meses y 119 €/mes de por vida.
+• Opcional: check-in autónomo con cerraduras Belock (TTLock): 150 € + IVA por cerradura, con la cerradura incluida, instalada y configurada por nosotros (la pasarela se presupuesta según tu instalación).
+• Sin permanencia. Tus datos son tuyos y se exportan cuando quieras. Precios sin IVA.
+
+Aquí puedes verlo todo: https://www.betanbm.com
+
+¿Te parece que te lo enseñe en 15 minutos, en {hotel} o por videollamada?
+
+Un saludo,
+{firma}
+
+P. D.: Si no es el momento, respóndeme «ahora no» y no vuelvo a escribirte.`,
+ wa:`Hola {nombre}, soy Fran Rubio, de Benalmádena. He desarrollado el sistema de gestión con el que funciona el Hotel Betania: reserva directa, parte de la Policía (SES) automático y check-in con código en la puerta sin recepción. Busco 3 hoteles de la zona como clientes fundadores, con implantación gratuita y un mes de prueba. ¿Te lo enseño 15 minutos en {hotel}? Más info: https://www.betanbm.com`,
+ fu:`Hola {nombre}, te reenvío esto por si se perdió. Te dejo la web con todo el detalle: https://www.betanbm.com. ¿Te cuadra una llamada o visita de 15 minutos esta semana?`
+};
+const LS='betan-envio-v1', $=id=>document.getElementById(id);
+const load=(k,d)=>{try{const v=localStorage.getItem(LS+k);return v?JSON.parse(v):d}catch(e){return d}};
+const save=(k,v)=>{try{localStorage.setItem(LS+k,JSON.stringify(v))}catch(e){}};
+function parseCSV(t){const out=[];let r=[],f='',q=false;t=t.replace(/\r/g,'');
+ for(let i=0;i<t.length;i++){const c=t[i];
+  if(q){if(c=='"'&&t[i+1]=='"'){f+='"';i++}else if(c=='"')q=false;else f+=c}
+  else if(c=='"')q=true;else if(c==','){r.push(f);f=''}else if(c=='\n'){r.push(f);out.push(r);r=[];f=''}else f+=c}
+ if(f||r.length){r.push(f);out.push(r)}return out.filter(x=>x.some(y=>y.trim()))}
+function rowsFromCSV(t){const a=parseCSV(t);const h=a.shift().map(x=>x.trim().toLowerCase());
+ return a.map(r=>{const o={};h.forEach((k,i)=>o[k]=(r[i]||'').trim());return {id:crypto.randomUUID(),hotel:o.hotel,contacto:o.contacto||'',localidad:o.localidad||'',email:o.email||'',telefono:o.telefono||'',web:o.web||'',habitaciones:o.habitaciones||'',notas:o.notas||'',sent:null,waSent:null,fu:null}})}
+const csvEsc=s=>/[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+let T=load('t2',DEF), P=load('p',null); if(!P){P=rowsFromCSV(SEED);save('p',P)}
+['subj','mail','wa','fu'].forEach(k=>{if(T[k]==null)T[k]=DEF[k]});
+$('tSubj').value=T.subj;$('tMail').value=T.mail;$('tWa').value=T.wa;$('tFu').value=T.fu;
+$('saveT').onclick=()=>{T={subj:$('tSubj').value,mail:$('tMail').value,wa:$('tWa').value,fu:$('tFu').value};save('t2',T);render()};
+$('resetT').onclick=()=>{T={...DEF};save('t2',T);location.reload()};
+const sign=()=>`${SENDER.name}\n${SENDER.phone} · ${SENDER.web}`;
+const fill=(s,p)=>s.replaceAll('{nombre}',p.contacto||'equipo').replaceAll('{hotel}',p.hotel).replaceAll('{localidad}',p.localidad||'la Costa del Sol').replaceAll('{firma}',sign());
+function wanum(t){let d=(t||'').replace(/\D/g,'');if(d.startsWith('00'))d=d.slice(2);if(d.length==9&&/^[67]/.test(d))d='34'+d;return /^34[67]\d{8}$/.test(d)||(d.length>=10&&!d.startsWith('34'))?d:''}
+const days=d=>Math.floor((Date.now()-new Date(d))/864e5);
+function render(){
+ const f=$('flt').value, list=P.filter(p=>f=='all'||(f=='done'?(p.sent||p.waSent):!(p.sent||p.waSent)));
+ $('count').textContent=`${list.length} de ${P.length}`;
+ const tb=$('rows');tb.textContent='';
+ list.forEach(p=>{
+  const tr=document.createElement('tr');if(p.sent||p.waSent)tr.className='done';
+  const td=()=>tr.appendChild(document.createElement('td'));
+  let c=td();const b=document.createElement('b');b.textContent=p.hotel;c.append(b);
+  const sm=document.createElement('div');sm.className='mut';sm.textContent=[p.localidad,p.habitaciones?p.habitaciones+' hab.':'',p.web].filter(Boolean).join(' · ');c.append(sm);
+  if(p.notas){const n=document.createElement('div');n.className='mut';n.textContent=p.notas;c.append(n)}
+  td().textContent=p.contacto||'—';
+  c=td();c.style.whiteSpace='nowrap';
+  const mail=document.createElement('a');mail.className='b p'+(p.email?'':' off');mail.textContent='✉ Email';
+  if(p.email)mail.href='mailto:'+encodeURIComponent(p.email).replace('%40','@')+'?subject='+encodeURIComponent(fill(T.subj,p))+'&body='+encodeURIComponent(fill(T.mail,p));
+  mail.onclick=()=>{p.sent=new Date().toISOString().slice(0,10);save('p',P);setTimeout(render,300)};
+  const n=wanum(p.telefono);const wa=document.createElement('a');wa.className='b'+(n?'':' off');wa.textContent='💬 WhatsApp';wa.target='_blank';wa.rel='noopener';
+  if(n)wa.href='https://wa.me/'+n+'?text='+encodeURIComponent(fill(T.wa,p));
+  wa.onclick=()=>{p.waSent=new Date().toISOString().slice(0,10);save('p',P);setTimeout(render,300)};
+  const tel=document.createElement('a');tel.className='b'+(p.telefono?'':' off');tel.textContent='📞';if(p.telefono)tel.href='tel:'+p.telefono.replace(/\s/g,'');
+  c.append(mail,' ',wa,' ',tel);
+  c=td();
+  const first=p.sent||p.waSent;
+  if(first){const s=document.createElement('div');s.className='ok';s.textContent='Enviado '+first;c.append(s);
+   const d=days(first);const fu=document.createElement('div');fu.className='mut';
+   if(p.fu)fu.textContent='Seguimiento hecho '+p.fu;else if(d>=4)fu.textContent='⏰ Toca seguimiento (hace '+d+' días)';else fu.textContent='Seguimiento en '+(4-d)+' días';c.append(fu);
+   if(!p.fu&&d>=4){const fa=document.createElement('a');fa.className='b p';fa.textContent='Seguimiento';
+     if(n){fa.href='https://wa.me/'+n+'?text='+encodeURIComponent(fill(T.fu,p));fa.target='_blank';fa.rel='noopener'}
+     else if(p.email)fa.href='mailto:'+p.email+'?subject='+encodeURIComponent('Re: '+fill(T.subj,p))+'&body='+encodeURIComponent(fill(T.fu,p)+'\n\n'+sign());
+     fa.onclick=()=>{p.fu=new Date().toISOString().slice(0,10);save('p',P);setTimeout(render,300)};c.append(fa)}
+  } else c.textContent='Pendiente';
+  c=td();const del=document.createElement('button');del.textContent='✕';del.title='Quitar';del.onclick=()=>{if(confirm('¿Quitar '+p.hotel+'?')){P=P.filter(x=>x!==p);save('p',P);render()}};c.append(del);
+  tb.appendChild(tr)})}
+$('flt').onchange=render;
+$('add').onclick=()=>{const h=$('nHotel').value.trim();if(!h)return;
+ P.unshift({id:crypto.randomUUID(),hotel:h,contacto:$('nContact').value.trim(),localidad:$('nTown').value.trim(),email:$('nMail').value.trim(),telefono:$('nTel').value.trim(),web:'',habitaciones:'',notas:'',sent:null,waSent:null,fu:null});
+ save('p',P);['nHotel','nContact','nTown','nMail','nTel'].forEach(i=>$(i).value='');render()};
+$('imp').onclick=()=>$('file').click();
+$('file').onchange=e=>{const r=new FileReader();r.onload=()=>{P=P.concat(rowsFromCSV(r.result));save('p',P);render()};r.readAsText(e.target.files[0])};
+$('exp').onclick=()=>{const h=['hotel','contacto','localidad','email','telefono','web','habitaciones','notas','enviado','whatsapp','seguimiento'];
+ const t=[h.join(',')].concat(P.map(p=>[p.hotel,p.contacto,p.localidad,p.email,p.telefono,p.web,p.habitaciones,p.notas,p.sent||'',p.waSent||'',p.fu||''].map(csvEsc).join(','))).join('\n');
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/csv'}));a.download='prospectos.csv';a.click()};
+['Benalmádena','Torremolinos','Fuengirola','Mijas','Málaga'].forEach(t=>{const a=document.createElement('a');a.className='b';a.textContent='Hoteles en '+t;a.target='_blank';a.rel='noopener';
+ a.href='https://www.google.com/maps/search/'+encodeURIComponent('hotel pequeño hostal '+t);$('maps').appendChild(a)});
+render();
+</script></main></body></html>

@@ -633,7 +633,11 @@ app.get('/reports/summary', zValidator('query', z.object({
         notInArray(financialTransactions.paymentMethod, ['deposit', 'deposit_cc']),
         sql`${financialTransactions.category} IS DISTINCT FROM 'movimiento_caja'`,
       ),
-      with: { financialAccount: true, reservation: { with: { guest: true } } },
+      with: {
+        financialAccount: true,
+        reservation: { with: { guest: true } },
+        paidByUser: { columns: { id: true, firstName: true, lastName: true } },
+      },
       orderBy: desc(financialTransactions.transactionDate),
     })
 
@@ -747,7 +751,7 @@ app.get('/invoices/:id', async (c) => {
     const id = Number(c.req.param('id'))
     const invoice = await db.query.invoices.findFirst({
       where: and(eq(invoices.id, id), eq(invoices.propertyId, getPropertyId())),
-      with: { guest: true, reservation: { with: { room: true } } },
+      with: { guest: true, reservation: { with: { room: true, rate: true } } },
     })
     if (!invoice) return notFound(c, 'Factura')
     return c.json({ data: invoice })
@@ -768,25 +772,54 @@ app.delete('/invoices/:id', async (c) => {
   } catch (err) { return serverError(c, err) }
 })
 
-// PATCH /api/financial/invoices/:id — editar datos de facturación, notas, número y total (admin)
+// PATCH /api/financial/invoices/:id — editar datos de facturación, notas, número,
+// fecha de emisión y total. Los últimos tres son sensibles (afectan a lo ya
+// declarado/contabilizado) — solo dirección puede tocarlos; antes esto solo
+// se ocultaba en el frontend, sin comprobarse aquí.
+const lineItemSchema = z.object({
+  description: z.string(),
+  quantity:    z.number().positive(),
+  unitPrice:   z.number().min(0),
+})
+
 app.patch('/invoices/:id', zValidator('json', z.object({
   billingName:    z.string().nullable().optional(),
   billingNif:     z.string().nullable().optional(),
   billingAddress: z.string().nullable().optional(),
   notes:          z.string().nullable().optional(),
   invoiceNumber:  z.string().min(1).optional(),
+  issuedAt:       z.string().date().optional(),
   total:          z.number().positive().optional(),
+  lineItems:      z.array(lineItemSchema).nullable().optional(),
 })), async (c) => {
   try {
     const id   = Number(c.req.param('id'))
     const body = c.req.valid('json')
+    const { isAdmin } = await import('../middleware/auth')
+    const adminFields = body.invoiceNumber !== undefined || body.issuedAt !== undefined
+      || body.total !== undefined || body.lineItems !== undefined
+    if (adminFields && !isAdmin(c)) return c.json({ error: 'Sin permisos' }, 403)
     const setData: Record<string, any> = {}
     if (body.billingName    !== undefined) setData.billingName    = body.billingName
     if (body.billingNif     !== undefined) setData.billingNif     = body.billingNif
     if (body.billingAddress !== undefined) setData.billingAddress = body.billingAddress
     if (body.notes          !== undefined) setData.notes          = body.notes
     if (body.invoiceNumber  !== undefined) setData.invoiceNumber  = body.invoiceNumber
-    if (body.total !== undefined) {
+    if (body.issuedAt       !== undefined) setData.issuedAt       = body.issuedAt
+    if (body.lineItems !== undefined) {
+      setData.lineItems = body.lineItems
+      if (body.lineItems && body.lineItems.length > 0) {
+        const rawTotal  = body.lineItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0)
+        const total     = parseFloat(rawTotal.toFixed(2))
+        const cfg       = await getInvoiceConfig()
+        const divisor   = 1 + cfg.taxRate / 100
+        const subtotal  = parseFloat((total / divisor).toFixed(2))
+        const taxAmount = parseFloat((total - subtotal).toFixed(2))
+        setData.total    = String(total)
+        setData.subtotal = String(subtotal)
+        setData.taxAmount= String(taxAmount)
+      }
+    } else if (body.total !== undefined) {
       const cfg       = await getInvoiceConfig()
       const divisor   = 1 + cfg.taxRate / 100
       const subtotal  = parseFloat((body.total / divisor).toFixed(2))

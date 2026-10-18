@@ -220,8 +220,14 @@ app.post('/extras', zValidator('json', z.object({
     ))
     const itemsById = new Map(items.filter(i => extraIds.includes(i.id)).map(i => [i.id, i]))
 
-    const nights = res.nights as number
-    const people  = res.people as number
+    // Noches que quedan por cobrar (de hoy al checkout), no las de la estancia
+    // completa — si compra el desayuno en el día 3 de 7, solo paga lo que
+    // queda, no los días que ya pasaron. Si todavía no ha hecho check-in, es
+    // sencillamente el total de la estancia.
+    const today  = (await nowParts()).date
+    const start  = today > res.checkInDate ? today : res.checkInDate
+    const nights = Math.max(0, Math.round((new Date(res.checkOutDate + 'T12:00:00').getTime() - new Date(start + 'T12:00:00').getTime()) / 86400000))
+    const people = res.people as number
 
     let detail: { i: number; q: number; u: number; title: string }[] = []
     for (const req of body.extras) {

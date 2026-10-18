@@ -154,24 +154,47 @@ export function buildItemsTable(inv: any, currencyCode?: string): string {
   const subtotal = parseFloat(inv.subtotal ?? '0')
   const taxAmt   = parseFloat(inv.taxAmount ?? '0')
   const total    = parseFloat(inv.total ?? '0')
-  const nights   = inv.reservation?.nights ?? 1
-  const rateName = inv.reservation?.rate?.title ?? 'Alojamiento'
-  const pricePerNight = nights > 0 ? subtotal / nights : subtotal
   const taxPct   = taxAmt > 0 && subtotal > 0 ? Math.round((taxAmt / subtotal) * 100) : 0
 
-  return `<table class="invoice-items-table">
-  <thead><tr class="invoice-items-table-header-tr">
-    <td class="invoice-items-table-wide-td">Descripción</td>
-    <td class="invoice-items-table-narrow-td" style="text-align:center">Noches</td>
-    <td class="invoice-items-table-number-td">Precio/noche</td>
-    <td class="invoice-items-table-number-td">Importe</td>
-  </tr></thead>
-  <tbody><tr class="invoice-items-table-body-tr">
+  const customItems: Array<{ description: string; quantity: number; unitPrice: number }> | null =
+    Array.isArray(inv.lineItems) && inv.lineItems.length > 0 ? inv.lineItems : null
+
+  let bodyRows: string
+  if (customItems) {
+    bodyRows = customItems.map(item => {
+      const lineTotal = (item.quantity || 0) * (item.unitPrice || 0)
+      return `<tr class="invoice-items-table-body-tr">
+    <td>${item.description}</td>
+    <td class="invoice-items-table-narrow-td" style="text-align:center">${item.quantity}</td>
+    <td class="invoice-items-table-number-td">${fmtEuro(item.unitPrice)} ${cur}</td>
+    <td class="invoice-items-table-number-td">${fmtEuro(lineTotal)} ${cur}</td>
+  </tr>`
+    }).join('\n  ')
+  } else {
+    const nights        = inv.reservation?.nights ?? 1
+    const rateName      = inv.reservation?.rate?.title ?? 'Alojamiento'
+    const pricePerNight = nights > 0 ? subtotal / nights : subtotal
+    bodyRows = `<tr class="invoice-items-table-body-tr">
     <td>Alojamiento — ${rateName}</td>
     <td class="invoice-items-table-narrow-td" style="text-align:center">${nights}</td>
     <td class="invoice-items-table-number-td">${fmtEuro(pricePerNight)} ${cur}</td>
     <td class="invoice-items-table-number-td">${fmtEuro(subtotal)} ${cur}</td>
-  </tr></tbody>
+  </tr>`
+  }
+
+  const colHeader = customItems
+    ? `<td class="invoice-items-table-narrow-td" style="text-align:center">Cant.</td>
+    <td class="invoice-items-table-number-td">P. unit.</td>`
+    : `<td class="invoice-items-table-narrow-td" style="text-align:center">Noches</td>
+    <td class="invoice-items-table-number-td">Precio/noche</td>`
+
+  return `<table class="invoice-items-table">
+  <thead><tr class="invoice-items-table-header-tr">
+    <td class="invoice-items-table-wide-td">Descripción</td>
+    ${colHeader}
+    <td class="invoice-items-table-number-td">Importe</td>
+  </tr></thead>
+  <tbody>${bodyRows}</tbody>
   <tfoot>
     <tr><td colspan="3" class="invoice-items-table-footer-label-td"><b>BASE IMPONIBLE</b></td>
       <td class="invoice-items-table-footer-value-td">${fmtEuro(subtotal)} ${cur}</td></tr>
@@ -203,7 +226,10 @@ export async function fetchInvoiceTemplate(): Promise<string | null> {
   } catch { return null }
 }
 
-export function printInvoice(inv: any, template: string | null, branding?: InvoiceBranding | null): void {
+// Construye el HTML final de la factura (plantilla ya rellenada) — sin nada
+// de navegador, puro string building, así que también lo puede llamar un
+// script de Node/Bun sin DOM y el resultado es IDÉNTICO al que ve el usuario al "Imprimir".
+export function buildInvoiceHtml(inv: any, template: string | null, branding?: InvoiceBranding | null): string {
   const g = inv.guest ?? {}
   const r = inv.reservation ?? {}
 
@@ -257,7 +283,11 @@ export function printInvoice(inv: any, template: string | null, branding?: Invoi
   for (const tag of ['hotelRta', 'hotelVat', 'hotelRegistry']) html = applyConditional(html, tag, !!data[`{{${tag}}}`])
   html = html.replace(/\{\{#\w+\}\}[\s\S]*?\{\{\/\w+\}\}/g, '')
 
-  html += '<script>window.onload=()=>window.print()<\/script>'
+  return html
+}
+
+export function printInvoice(inv: any, template: string | null, branding?: InvoiceBranding | null): void {
+  const html = buildInvoiceHtml(inv, template, branding) + '<script>window.onload=()=>window.print()<\/script>'
   const w = window.open('', '_blank')
   if (w) { w.document.write(html); w.document.close() }
 }

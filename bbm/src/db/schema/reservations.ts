@@ -202,7 +202,12 @@ export const reservations = pgTable('reservations', {
   // en una reserva consecutiva del mismo huésped sin que la vuelva a pasar
   // (ver "Enrolado automático por reserva consecutiva" en check-in). "Tarjeta
   // activa ahora mismo" = zktecoCardNo IS NOT NULL AND zktecoCardRevokedAt IS NULL.
+  // Esta marca cubre también las tarjetas extra de zktecoExtraCards.
   zktecoCardRevokedAt:  timestamp('zkteco_card_revoked_at', { withTimezone: true }),
+  // Tarjetas ZKTeco adicionales (huéspedes extra). Array de
+  // { cardNo, cardBe, pin, enrolledAt } donde pin = reservationId + 1_000_000_000 × n.
+  // ttlockCardIds almacena las credenciales TTLock de TODAS las tarjetas (primary + extra).
+  zktecoExtraCards:     jsonb('zkteco_extra_cards'),
   // SES Hospedajes
   sesSubmittedAt:       timestamp('ses_submitted_at', { withTimezone: true }),
   sesLocutorioId:       text('ses_locutorio_id'),
@@ -220,10 +225,21 @@ export const reservations = pgTable('reservations', {
   billingAddress:       text('billing_address'),
   // Habitaciones adicionales (además de roomId) para reservas multi-habitación
   extraRoomIds:         jsonb('extra_room_ids').$type<number[]>(),
+  // Habitaciones de la reserva (roomId o alguna de extraRoomIds) marcadas como
+  // "cerradas" — no se puede reasignar a otro huésped de la misma reserva,
+  // aunque la reserva en general siga activa (p.ej. ya se hizo el check-in de
+  // esa habitación y no se quiere que se mueva a nadie más dentro)
+  lockedRoomIds:        jsonb('locked_room_ids').$type<number[]>().notNull().default([]),
   // Partir reserva por fecha (mover parte de la estancia a otra habitación):
   // referencias cruzadas entre la reserva original (truncada) y la continuación
   splitFromReservationId: integer('split_from_reservation_id'),
   splitToReservationId:   integer('split_to_reservation_id'),
+  // Snapshot de antes de la ÚLTIMA ampliación de estancia (ver PATCH /:id en
+  // reservations.ts) — permite un botón "Deshacer ampliación" de un solo
+  // nivel mientras lo añadido siga sin cobrar (GET /:id/undo-extension lo
+  // exige). Se sobrescribe en cada ampliación nueva (solo se puede deshacer
+  // la última) y se limpia (null) al deshacer.
+  pendingExtension:     jsonb('pending_extension').$type<{ prevCheckOutDate: string; prevNights: number; prevTotal: string; extendedAt: string }>(),
 })
 
 export type Reservation = typeof reservations.$inferSelect

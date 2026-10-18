@@ -212,6 +212,7 @@ export const invoices = pgTable('invoices', {
   billingNif:    text('billing_nif'),
   billingAddress:text('billing_address'),
   notes:         text('notes'),
+  lineItems:     jsonb('line_items'),
   pdfUrl:        text('pdf_url'),
   createdBy:     integer('created_by').references(() => users.id),
   createdAt:     timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

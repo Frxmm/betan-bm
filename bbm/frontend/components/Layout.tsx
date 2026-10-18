@@ -5,6 +5,7 @@ import Topbar from './Topbar'
 import UrgentAlertsBar from './UrgentAlertsBar'
 import EngagementWeeklyPopup from './EngagementWeeklyPopup'
 import ImportantStaffMessagePopup from './ImportantStaffMessagePopup'
+import DailyReceptionReminderPopup from './DailyReceptionReminderPopup'
 import BreakfastLockGuard from './BreakfastLockGuard'
 import AdminQuickStats, { AdminQuickStatsModal } from './AdminQuickStats'
 import { useAuth } from '../contexts/AuthContext'
@@ -63,6 +64,7 @@ export default function Layout() {
         <UrgentAlertsBar />
         <EngagementWeeklyPopup />
         <ImportantStaffMessagePopup />
+        <DailyReceptionReminderPopup />
         <BreakfastLockGuard />
         <AdminQuickStats />
         <main id="content">

@@ -65,7 +65,104 @@ function MyEngagement() {
           <ul style={{ fontSize: 13, paddingLeft: 18 }}>{me.adjustments.map((a: any, i: number) => <li key={i}>{a.points > 0 ? '+' : ''}{a.points} — {a.reason ?? 'sin motivo'} <span style={{ color: 'var(--text2)' }}>({new Date(a.created_at).toLocaleDateString('es-ES')})</span></li>)}</ul>
         </>
       )}
+      <h3 style={{ margin: '16px 0 8px' }}>Resúmenes de turno</h3>
+      <ShiftEndReportsList />
     </>
+  )
+}
+
+// ─── Resúmenes de fin de turno (check-ins/check-outs, alertas, extras...) ───
+// Compartido entre la vista propia y la de Dirección — ver
+// src/lib/shiftEndReport.ts para el cálculo y src/routes/alerts.ts para
+// cuándo se genera (15 min antes de que acabe el turno de recepción).
+function fmtHora(iso: string) {
+  return new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+}
+
+function ShiftEndReportsList({ userId }: { userId?: number }) {
+  const [reports, setReports] = useState<any[] | null>(null)
+  const [open, setOpen] = useState<Set<number>>(new Set())
+
+  useEffect(() => {
+    setReports(null)
+    api.engagementShiftReports(userId).then(r => setReports(r.data ?? [])).catch(() => setReports([]))
+  }, [userId])
+
+  if (reports === null) return <div style={{ color: 'var(--text2)', fontSize: 13 }}>Cargando resúmenes de turno…</div>
+  if (reports.length === 0) return <div style={{ color: 'var(--text2)', fontSize: 13 }}>Sin resúmenes de turno todavía.</div>
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {reports.map(r => {
+        const b = r.breakdown
+        const isOpen = open.has(r.id)
+        return (
+          <div key={r.id} className="card" style={{ padding: '10px 14px' }}>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
+              onClick={() => setOpen(prev => { const next = new Set(prev); next.has(r.id) ? next.delete(r.id) : next.add(r.id); return next })}
+            >
+              <span>{isOpen ? '▾' : '▸'}</span>
+              <strong>{r.shift_date}</strong>
+              <span style={{ color: 'var(--text2)', fontSize: 12 }}>
+                {fmtHora(r.shift_start)} → {fmtHora(r.shift_end)}
+              </span>
+              <strong style={{ marginLeft: 'auto', color: r.total_points >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                {r.total_points >= 0 ? '+' : ''}{r.total_points} pts
+              </strong>
+            </div>
+
+            {isOpen && (
+              <div style={{ marginTop: 10, fontSize: 13 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 10, color: 'var(--text2)' }}>
+                  <span>Check-ins: <strong style={{ color: 'var(--text)' }}>{b.checkins.length}</strong> ({b.points.checkins >= 0 ? '+' : ''}{b.points.checkins})</span>
+                  <span>Check-outs: <strong style={{ color: 'var(--text)' }}>{b.checkouts.length}</strong> (dep. {b.points.deposits >= 0 ? '+' : ''}{b.points.deposits}, horario {b.points.checkoutTiming >= 0 ? '+' : ''}{b.points.checkoutTiming})</span>
+                  <span>Velocidad check-in: <strong style={{ color: 'var(--text)' }}>{b.avgCheckinSeconds != null ? `${Math.round(b.avgCheckinSeconds)}s` : '—'}</strong> ({b.points.checkinSpeed >= 0 ? '+' : ''}{b.points.checkinSpeed})</span>
+                  <span>Carritos llamados: <strong style={{ color: 'var(--text)' }}>{b.abandonedCartCalls}</strong> (+{b.points.abandonedCarts})</span>
+                  <span>Extras vendidos: <strong style={{ color: 'var(--text)' }}>{b.extrasCount}</strong> ({b.points.extras >= 0 ? '+' : ''}{b.points.extras})</span>
+                  <span>Alertas del turno: <strong style={{ color: 'var(--text)' }}>{b.alertsCount}</strong> ({b.points.alerts >= 0 ? '+' : ''}{b.points.alerts})</span>
+                  <span>Alertas de antes resueltas: <strong style={{ color: 'var(--text)' }}>{b.alertsResolvedCount}</strong> (+{b.points.alertsResolved})</span>
+                </div>
+
+                {b.checkins.length > 0 && (
+                  <div className="table-wrap" style={{ marginBottom: 10 }}>
+                    <table>
+                      <thead><tr><th>Hab.</th><th>Hora</th><th>SES</th><th>ZKTeco</th><th>Cobro</th></tr></thead>
+                      <tbody>
+                        {b.checkins.map((ci: any, i: number) => (
+                          <tr key={i}>
+                            <td>{ci.roomCode}</td><td>{fmtHora(ci.at)}</td>
+                            <td style={{ color: ci.sesOk ? 'var(--green)' : 'var(--red)' }}>{ci.sesOk ? '✓' : '✗'}</td>
+                            <td style={{ color: ci.zktecoOk ? 'var(--green)' : 'var(--red)' }}>{ci.zktecoOk ? '✓' : '✗'}</td>
+                            <td style={{ color: ci.paymentOk ? 'var(--green)' : 'var(--red)' }}>{ci.paymentOk ? '✓' : '✗'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {b.checkouts.length > 0 && (
+                  <div className="table-wrap">
+                    <table>
+                      <thead><tr><th>Hab.</th><th>Hora</th><th>Depósito</th></tr></thead>
+                      <tbody>
+                        {b.checkouts.map((co: any, i: number) => (
+                          <tr key={i}>
+                            <td>{co.roomCode}</td><td>{fmtHora(co.at)}</td>
+                            <td>{!co.hadDeposit ? '—' : co.depositCharged ? <span style={{ color: 'var(--green)' }}>Cobrado</span> : 'Devuelto'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -147,7 +244,7 @@ function EngagementAdmin() {
             </ResponsiveContainer>
           </div>
           <h3 style={{ margin: '0 0 8px' }}>Horas del día en que trabaja en la plataforma</h3>
-          <div style={{ height: 200 }}>
+          <div style={{ height: 200, marginBottom: 20 }}>
             <ResponsiveContainer>
               <BarChart data={selected.byHour.map((n: number, h: number) => ({ h: `${h}h`, n }))}>
                 <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="h" interval={1} /><YAxis allowDecimals={false} /><Tooltip />
@@ -155,6 +252,8 @@ function EngagementAdmin() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+          <h3 style={{ margin: '0 0 8px' }}>{selected.name} — resúmenes de turno</h3>
+          <ShiftEndReportsList userId={selected.userId} />
         </>
       )}
     </>

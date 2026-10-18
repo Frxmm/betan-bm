@@ -201,7 +201,8 @@ export const api = {
   updateReservation:    (id: number, data: unknown) => req<ApiItem<Reservation>>('PATCH', `/reservations/${id}`, data),
   checkIn:              (id: number, body?: { checkinStartedAt?: string }) => req<ApiItem<Reservation>>('POST', `/reservations/${id}/check-in`, body ?? {}),
   checkOut:             (id: number, body?: { guestRating?: number }) => req<ApiItem<Reservation>>('POST', `/reservations/${id}/check-out`, body ?? {}),
-  cancelReservation:    (id: number) => req<ApiItem<Reservation>>('POST', `/reservations/${id}/cancel`),
+  cancelReservation:    (id: number, body?: { changeReason?: string }) => req<ApiItem<Reservation>>('POST', `/reservations/${id}/cancel`, body ?? {}),
+  undoExtension:        (id: number) => req<ApiItem<Reservation>>('POST', `/reservations/${id}/undo-extension`),
   splitReservation:     (id: number, data: { splitDate: string; newRoomId: number }) =>
     req<ApiItem<{ original: Reservation; created: Reservation }>>('POST', `/reservations/${id}/split`, data),
   deleteReservation:    (id: number) => req<{ ok: boolean }>('DELETE', `/reservations/${id}`),
@@ -372,6 +373,14 @@ export const api = {
     req<{
       data: { day: string; visits: number }[]
       meta: { totalVisits: number; daysWithVisits: number; avgPerDay: number; busiestDay: { day: string; visits: number } | null }
+      byHour: { hour: number; visits: number }[]
+      byRoom: { roomId: number | null; roomCode: string | null; visits: number }[]
+      byReservation: {
+        reservationId: number; guestName: string; roomCodes: string; visits: number
+        firstVisit: string; lastVisit: string
+        extras: { lines: number; total: number }
+        housekeeping: { dnd: number; towelsOnly: number; clean: number }
+      }[]
     }>('GET', `/reports/room-access-visits?from=${from}&to=${to}`),
   getChannelSalesReport: (params: Record<string, string>) =>
     req<{ data: any[]; meta: any }>('GET', '/reports/channel-sales?' + new URLSearchParams(params)),
@@ -423,6 +432,7 @@ export const api = {
   createUser:  (data: unknown) => req<ApiItem<any>>('POST', '/users', data),
   updateUser:  (id: number, data: unknown) => req<ApiItem<any>>('PATCH', `/users/${id}`, data),
   deleteUser:  (id: number) => req<null>('DELETE', `/users/${id}`),
+  forceLogoutUser: (id: number) => req<{ ok: boolean }>('POST', `/users/${id}/force-logout`),
 
   // ─── Reglas de edición de campos de reserva ───────────────────────────────
   getFieldRules:    () => req<ApiList<any>>('GET', '/settings/field-rules'),
@@ -463,6 +473,8 @@ export const api = {
   engagementMe: () => req<{ data: any; meta?: any }>('GET', '/engagement/me'),
   engagement: (params: Record<string, string>) =>
     req<{ data: any[]; meta: any }>('GET', '/engagement?' + new URLSearchParams(params)),
+  engagementShiftReports: (userId?: number) =>
+    req<{ data: any[] }>('GET', '/engagement/shift-reports' + (userId ? `?userId=${userId}` : '')),
 
   // ─── Competidores (comparativa de precios) ─────────────────────────────────
   listCompetitors:   () => req<ApiList<any>>('GET', '/competitors'),
@@ -500,4 +512,10 @@ export const api = {
   getPropertySettings: () => req<ApiItem<any>>('GET', '/settings/property'),
   updatePropertySettings: (data: unknown) => req<ApiItem<any>>('PUT', '/settings/property', data),
   propertyFeatures:    () => req<ApiItem<{ key: string; enabled: boolean; label: string; group: string; description: string }[]>>('GET', '/settings/property/features'),
+  idScanDoneToday: () =>
+    req<ApiItem<{
+      guest_id: number; first_name: string; last_name: string; scanned_at: string
+      emp_first_name: string | null; emp_last_name: string | null
+      reservation_id: number | null; room_code: string | null
+    }[]>>('GET', '/id-scan/done-today'),
 }

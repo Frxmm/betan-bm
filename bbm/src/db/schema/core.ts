@@ -98,6 +98,12 @@ export const users = pgTable('users', {
   avatarUrl:    text('avatar_url'),
   lastLoginAt:  timestamp('last_login_at', { withTimezone: true }),
   active:       boolean('active').notNull().default(true),
+  // sessionVersion: se incluye en el JWT al hacer login; requireAuth la
+  // compara contra esta columna en cada petición. Incrementarla (botón
+  // "Cerrar sesión" en Usuarios, solo Dirección) invalida al instante
+  // CUALQUIER token ya emitido para ese usuario — los JWT no tienen estado
+  // propio, así es como se fuerza un cierre de sesión real.
+  sessionVersion: integer('session_version').notNull().default(1),
   // Fuerza la vista de "Resumen rápido" (AdminQuickStats) como pantalla única
   // durante toda la sesión de este usuario — sin sidebar, sin resto de la app,
   // sin forma de cerrarla salvo cerrar sesión. Solo tiene sentido para

@@ -5,6 +5,7 @@ import { db } from '../db'
 import { reservations, guests, rooms, roomTypes, rates, rateDailyPrices, financialTransactions, financialAccounts, bookingChannels, customerTokens, saleItems, reservationSaleItems, guestContracts, abandonedCarts, cancellationRecoveries, reservationNotes, temporaryDiscountSettings, bookingDiscountTimers, blockedBeds, users, properties } from '../db/schema'
 import { hasRoomOverlap } from './reservations'
 import { findFreeRoomOfType } from '../lib/roomTypeAvailability'
+import { assignRoomsForCart, type CartLine } from '../lib/roomAssignment'
 import { renderContract, renderAdmissionTermsPage, type ContractData } from '../lib/contract'
 import { syncAutoInvoice } from '../lib/invoicing'
 import { realPaidByReservation, pendingBalance as calcPendingBalance } from '../lib/paymentAggregate'
@@ -214,9 +215,14 @@ app.get('/availability', zValidator('query', z.object({
 
       if (available === 0) continue
 
-      // Filtrar si el nº de huéspedes supera el máximo permitido en el booking engine
+      // Filtrar si el nº de huéspedes no cabe ni repartido entre las unidades
+      // libres — antes se comparaba contra UNA sola habitación (beMax a
+      // secas), lo que escondía tipos enteros en cuanto el grupo no cabía en
+      // una unidad (p. ej. una familia de 4 nunca veía dobles) — ahora que el
+      // motor deja añadir varias habitaciones al carrito, el grupo puede
+      // repartirse entre las `available` unidades libres de ese tipo.
       const beMax = (rt as any).maxOccupancyBookingEngine ?? rt.maxOccupancy
-      if (numGuests > beMax) continue
+      if (numGuests > beMax * available) continue
 
       const typeRates = webRates.filter(r => !r.roomTypeId || r.roomTypeId === rt.id)
       const rateOptions = []
@@ -345,8 +351,18 @@ app.post('/discount-timer', zValidator('json', z.object({
 app.post('/checkout', zValidator('json', z.object({
   checkIn:       z.string().date(),
   checkOut:      z.string().date(),
-  roomTypeId:    z.number().int().positive(),
-  rateId:        z.number().int().positive(),
+  // Carrito de habitaciones — una reserva puede llevar varias (incluso del
+  // mismo tipo con cantidad, o varios tipos distintos). La primera línea es
+  // la que se convierte en reservations.roomId/rateId; el resto en
+  // extraRoomIds (ver el desglose completo que se guarda en una nota).
+  rooms: z.array(z.object({
+    roomTypeId: z.number().int().positive(),
+    rateId:     z.number().int().positive(),
+    quantity:   z.number().int().min(1).max(9),
+  })).min(1).max(8).refine(
+    (rs) => rs.reduce((s, r) => s + r.quantity, 0) <= 10,
+    { message: 'Máximo 10 habitaciones por reserva' },
+  ),
   guests:        z.number().int().min(1).max(10),
   firstName:     z.string().min(1).max(100),
   lastName:      z.string().min(1).max(100),
@@ -375,44 +391,59 @@ app.post('/checkout', zValidator('json', z.object({
     const nights  = dateRange(body.checkIn, body.checkOut).length
     if (nights < 1) return c.json({ error: 'Fechas inválidas' }, 400)
 
-    // Verificar disponibilidad
-    const occu = await db.execute(sql`
-      SELECT COUNT(DISTINCT occ.room_id)::int AS occupied,
-             (SELECT COUNT(*)::int FROM rooms WHERE room_type_id = ${body.roomTypeId} AND property_id = ${getPropertyId()} AND active = true) AS total
-      FROM (
-        SELECT r.room_id FROM reservations r
-        WHERE r.property_id = ${getPropertyId()} AND r.room_id IS NOT NULL
-          AND r.status NOT IN ('cancelled','no_show')
-          AND r.check_in_date < ${body.checkOut}::date AND r.check_out_date > ${body.checkIn}::date
-          AND r.room_id IN (SELECT id FROM rooms WHERE room_type_id = ${body.roomTypeId})
-        UNION
-        SELECT x.room_id FROM (
-          SELECT jsonb_array_elements_text(r.extra_room_ids)::int AS room_id
-          FROM reservations r
-          WHERE r.property_id = ${getPropertyId()} AND r.extra_room_ids IS NOT NULL
+    // Verificar disponibilidad — por cada tipo de habitación distinto del
+    // carrito, agrupando cantidades si el carrito pide el mismo tipo en
+    // varias líneas (tarifas distintas).
+    const qtyByType = new Map<number, number>()
+    for (const line of body.rooms) qtyByType.set(line.roomTypeId, (qtyByType.get(line.roomTypeId) ?? 0) + line.quantity)
+
+    for (const [roomTypeId, qty] of qtyByType) {
+      const occu = await db.execute(sql`
+        SELECT COUNT(DISTINCT occ.room_id)::int AS occupied,
+               (SELECT COUNT(*)::int FROM rooms WHERE room_type_id = ${roomTypeId} AND property_id = ${getPropertyId()} AND active = true) AS total
+        FROM (
+          SELECT r.room_id FROM reservations r
+          WHERE r.property_id = ${getPropertyId()} AND r.room_id IS NOT NULL
             AND r.status NOT IN ('cancelled','no_show')
             AND r.check_in_date < ${body.checkOut}::date AND r.check_out_date > ${body.checkIn}::date
-        ) x
-        WHERE x.room_id IN (SELECT id FROM rooms WHERE room_type_id = ${body.roomTypeId})
-        UNION
-        SELECT bb.room_id FROM blocked_beds bb
-        WHERE bb.property_id = ${getPropertyId()}
-          AND bb.block_date >= ${body.checkIn}::date AND bb.block_date < ${body.checkOut}::date
-          AND bb.room_id IN (SELECT id FROM rooms WHERE room_type_id = ${body.roomTypeId})
-      ) occ
-    `) as unknown as { occupied: number; total: number }[]
+            AND r.room_id IN (SELECT id FROM rooms WHERE room_type_id = ${roomTypeId})
+          UNION
+          SELECT x.room_id FROM (
+            SELECT jsonb_array_elements_text(r.extra_room_ids)::int AS room_id
+            FROM reservations r
+            WHERE r.property_id = ${getPropertyId()} AND r.extra_room_ids IS NOT NULL
+              AND r.status NOT IN ('cancelled','no_show')
+              AND r.check_in_date < ${body.checkOut}::date AND r.check_out_date > ${body.checkIn}::date
+          ) x
+          WHERE x.room_id IN (SELECT id FROM rooms WHERE room_type_id = ${roomTypeId})
+          UNION
+          SELECT bb.room_id FROM blocked_beds bb
+          WHERE bb.property_id = ${getPropertyId()}
+            AND bb.block_date >= ${body.checkIn}::date AND bb.block_date < ${body.checkOut}::date
+            AND bb.room_id IN (SELECT id FROM rooms WHERE room_type_id = ${roomTypeId})
+        ) occ
+      `) as unknown as { occupied: number; total: number }[]
 
-    const { occupied, total } = occu[0] ?? { occupied: 0, total: 0 }
-    if (total - occupied < 1) return c.json({ error: 'No hay disponibilidad para las fechas seleccionadas' }, 409)
+      const { occupied, total } = occu[0] ?? { occupied: 0, total: 0 }
+      if (total - occupied < qty) {
+        const rt = await db.query.roomTypes.findFirst({ where: and(eq(roomTypes.id, roomTypeId), eq(roomTypes.propertyId, getPropertyId())) })
+        return c.json({ error: `No hay disponibilidad suficiente para "${rt?.bookingEngineLabel || rt?.name || 'ese tipo de habitación'}"` }, 409)
+      }
+    }
 
-    // Calcular precio siguiendo la cadena de derivación completa (tarifa y tipo
-    // de habitación) — misma lógica compartida que /availability
-    const rate = await db.query.rates.findFirst({ where: and(eq(rates.id, body.rateId), eq(rates.propertyId, getPropertyId())) })
-    if (!rate) return c.json({ error: 'Tarifa no encontrada' }, 404)
+    // Calcular precio de cada línea del carrito siguiendo la cadena de
+    // derivación completa (tarifa y tipo de habitación) — misma lógica
+    // compartida que /availability. Los mapas de cadenas se construyen UNA
+    // vez para la unión de tarifas/tipos de todas las líneas del carrito.
+    const allRateIds = [...new Set(body.rooms.map(r => r.rateId))]
+    const ratesInCart = await db.query.rates.findMany({ where: and(inArray(rates.id, allRateIds), eq(rates.propertyId, getPropertyId())) })
+    if (ratesInCart.length !== allRateIds.length) return c.json({ error: 'Tarifa no encontrada' }, 404)
+    const ratesInCartById = new Map(ratesInCart.map(r => [r.id, r]))
 
-    const rtForCheckout = await db.query.roomTypes.findFirst({ where: and(eq(roomTypes.id, body.roomTypeId), eq(roomTypes.propertyId, getPropertyId())) })
-    if (!rtForCheckout) return c.json({ error: 'Tipo de habitación no encontrado' }, 404)
-    const occupancy = rtForCheckout.maxOccupancy ?? 1
+    const allRoomTypeIds = [...new Set(body.rooms.map(r => r.roomTypeId))]
+    const roomTypesInCart = await db.query.roomTypes.findMany({ where: and(inArray(roomTypes.id, allRoomTypeIds), eq(roomTypes.propertyId, getPropertyId())) })
+    if (roomTypesInCart.length !== allRoomTypeIds.length) return c.json({ error: 'Tipo de habitación no encontrado' }, 404)
+    const roomTypesInCartById = new Map(roomTypesInCart.map(rt => [rt.id, rt]))
 
     const chainRates = await db.query.rates.findMany({
       where: and(eq(rates.propertyId, getPropertyId()), eq(rates.active, true)),
@@ -424,31 +455,51 @@ app.post('/checkout', zValidator('json', z.object({
     })
     const roomTypesById = new Map(chainRoomTypes.map(rt => [rt.id, rt]))
 
-    const rateIdsToCheck = rateChainIds(rate, chainById)
+    const rateIdsToCheck = new Set<number>()
+    for (const r of ratesInCart) for (const id of rateChainIds(r, chainById)) rateIdsToCheck.add(id)
 
     const allPrices = await db.select()
       .from(rateDailyPrices)
       .where(and(
         eq(rateDailyPrices.propertyId, getPropertyId()),
-        inArray(rateDailyPrices.rateId, rateIdsToCheck),
+        inArray(rateDailyPrices.rateId, [...rateIdsToCheck]),
         gte(rateDailyPrices.date, body.checkIn),
         lte(rateDailyPrices.date, addDays(body.checkOut, -1)),
         not(rateDailyPrices.closed),
       ))
 
     const dates = dateRange(body.checkIn, body.checkOut)
-    const resolvedPrices: Record<string, number> = {}
-    for (const d of dates) {
-      const p = resolvePrice(chainById, roomTypesById, allPrices, rate.id, body.roomTypeId, d, occupancy)
-      if (p != null) resolvedPrices[d] = p
+
+    type RoomLineDetail = { roomTypeId: number; rateId: number; quantity: number; lineTotal: number; roomTypeName: string; rateName: string }
+    const roomLines: RoomLineDetail[] = []
+    let roomTotal = 0
+
+    for (const line of body.rooms) {
+      const rate = ratesInCartById.get(line.rateId)!
+      const rt   = roomTypesInCartById.get(line.roomTypeId)!
+      const occupancy = rt.maxOccupancy ?? 1
+
+      let nightsSum = 0
+      for (const d of dates) {
+        const p = resolvePrice(chainById, roomTypesById, allPrices, rate.id, line.roomTypeId, d, occupancy)
+        if (p == null) return c.json({ error: `Sin precio para "${rt.bookingEngineLabel || rt.name}" el ${d}` }, 422)
+        nightsSum += p
+      }
+      const lineTotal = Math.round(nightsSum * line.quantity * 100) / 100
+      roomTotal += lineTotal
+      roomLines.push({
+        roomTypeId: line.roomTypeId, rateId: line.rateId, quantity: line.quantity, lineTotal,
+        roomTypeName: rt.bookingEngineLabel || rt.name, rateName: rate.title,
+      })
     }
+    roomTotal = Math.round(roomTotal * 100) / 100
 
-    const missing = dates.filter(d => !(d in resolvedPrices))
-    if (missing.length > 0) return c.json({ error: `Sin precio para: ${missing.join(', ')}` }, 422)
-
-    const roomTotal = dates.reduce((s, d) => s + resolvedPrices[d]!, 0)
-
-    // Calcular precio de extras
+    // Calcular precio de extras — igual criterio que /customer (purchase-extra):
+    // `quantity` guardada = nº real de unidades (desayunos, noches...), no
+    // "1 paquete" con el precio de toda la estancia metido en unitPrice (eso
+    // rompía el recuento de "resto de desayunos por servir" en Housekeeping,
+    // que cuenta quantity - servidos×personas, y dejaba sin fecha/motivo
+    // visible la línea en la pestaña Extras de la reserva).
     let extrasTotal = 0
     const extrasDetail: { saleItemId: number; quantity: number; unitPrice: number; title: string }[] = []
     if (body.extras?.length) {
@@ -459,16 +510,17 @@ app.post('/checkout', zValidator('json', z.object({
         const item = items.find(i => i.id === req.saleItemId)
         if (!item || !item.defaultPrice) continue
         const base = parseFloat(item.defaultPrice)
-        const qty  = Math.min(req.quantity, item.maxQuantity ?? 1)
-        let unit: number
+        const selectedQty = Math.min(req.quantity, item.maxQuantity ?? 1)
+        let multiplier: number
         switch (item.pricingType) {
-          case 'per_night':         unit = base * nights; break
-          case 'per_person':        unit = base * body.guests; break
-          case 'per_person_night':  unit = base * body.guests * nights; break
-          default:                  unit = base
+          case 'per_night':         multiplier = nights; break
+          case 'per_person':        multiplier = body.guests; break
+          case 'per_person_night':  multiplier = body.guests * nights; break
+          default:                  multiplier = 1
         }
-        extrasTotal += unit * qty
-        extrasDetail.push({ saleItemId: item.id, quantity: qty, unitPrice: unit, title: item.title })
+        const qty = multiplier * selectedQty
+        extrasTotal += base * qty
+        extrasDetail.push({ saleItemId: item.id, quantity: qty, unitPrice: base, title: item.title })
       }
     }
 
@@ -501,7 +553,6 @@ app.post('/checkout', zValidator('json', z.object({
 
     const totalAmount = Math.round((rawTotal - discountAmount) * 100) / 100
     const amountCents = Math.round(totalAmount * 100)
-    const roomType = await db.query.roomTypes.findFirst({ where: and(eq(roomTypes.id, body.roomTypeId), eq(roomTypes.propertyId, getPropertyId())) })
 
     // Upsert huésped por email
     let guestId: number
@@ -534,7 +585,7 @@ app.post('/checkout', zValidator('json', z.object({
       checkOutDate:     body.checkOut,
       nights:           nights as any,
       people:           body.guests as any,
-      rateId:           body.rateId,
+      rateId:           body.rooms[0]!.rateId,
       bookingChannelId: channelId,
       currencyId:       await getCurrencyId(),
       total:            totalAmount.toFixed(2),
@@ -558,6 +609,19 @@ app.post('/checkout', zValidator('json', z.object({
       })
     }
 
+    // Desglose del carrito — rateId/total de la reserva solo reflejan la
+    // PRIMERA línea (la que se convierte en roomId), así que si hay más de
+    // una habitación se deja constancia del desglose real para que el
+    // equipo no se quede con la idea de que es solo esa tarifa/habitación.
+    if (roomLines.length > 1 && reservation) {
+      const breakdown = roomLines.map(l => `${l.quantity}× ${l.roomTypeName} (${l.rateName}): ${l.lineTotal.toFixed(2)}€`).join(' · ')
+      await db.insert(reservationNotes).values({
+        reservationId: reservation.id,
+        note: `🛏️ Reserva con varias habitaciones (motor de reservas) — ${breakdown}`,
+        type: 'note',
+      })
+    }
+
     // Nota visible en la ficha de la reserva — extraField2 (comentarios) no se
     // muestra en ReservationDetailView, así que la preferencia de camas se
     // registra también como nota para que el equipo la vea al asignar habitación.
@@ -569,7 +633,10 @@ app.post('/checkout', zValidator('json', z.object({
       })
     }
 
-    // Guardar extras de la reserva
+    // Guardar extras de la reserva — con fecha (entrada, ya que son extras de
+    // toda la estancia, no de un día concreto) y nota de origen, igual que
+    // cualquier extra añadido a mano desde la ficha de la reserva — si no,
+    // la pestaña Extras los muestra sin fecha ni descripción del pago.
     if (extrasDetail.length > 0 && reservation) {
       await db.insert(reservationSaleItems).values(
         extrasDetail.map(e => ({
@@ -577,6 +644,8 @@ app.post('/checkout', zValidator('json', z.object({
           saleItemId:    e.saleItemId,
           quantity:      e.quantity as any,
           unitPrice:     e.unitPrice.toFixed(2),
+          date:          body.checkIn,
+          notes:         `Comprado en el motor de reservas web (reserva #${reservation.id})`,
         }))
       )
     }
@@ -592,8 +661,12 @@ app.post('/checkout', zValidator('json', z.object({
           currency:     await getStripeCurrency(),
           unit_amount:  amountCents,
           product_data: {
-            name:        `${(await getBranding()).name} — ${roomType?.name ?? 'Habitación'}`,
-            description: `${body.checkIn} → ${body.checkOut} · ${nights} noche${nights !== 1 ? 's' : ''} · Tarifa: ${rate?.title ?? ''}`,
+            name: roomLines.length > 1
+              ? `${(await getBranding()).name} — ${roomLines.reduce((s, l) => s + l.quantity, 0)} habitaciones`
+              : `${(await getBranding()).name} — ${roomLines[0]!.roomTypeName}`,
+            description: roomLines.length > 1
+              ? `${body.checkIn} → ${body.checkOut} · ${nights} noche${nights !== 1 ? 's' : ''} · ${roomLines.map(l => `${l.quantity}× ${l.roomTypeName}`).join(', ')}`
+              : `${body.checkIn} → ${body.checkOut} · ${nights} noche${nights !== 1 ? 's' : ''} · Tarifa: ${roomLines[0]!.rateName}`,
           },
         },
       }],
@@ -602,7 +675,12 @@ app.post('/checkout', zValidator('json', z.object({
         property_id:   String(getPropertyId()),
         reservationId: String(reservation!.id),
         guestId:       String(guestId),
-        roomTypeId:    String(body.roomTypeId),
+        // Carrito completo (sustituye al antiguo roomTypeId suelto) — tuplas
+        // compactas para no acercarse al límite de ~500 caracteres por valor
+        // de metadato de Stripe. Se vuelve a leer al confirmar el pago
+        // (assignRoomsForCart, webhook y /booking/confirm) y al retomar un
+        // pago abandonado (/checkout/resume).
+        cart:          JSON.stringify(body.rooms.map(r => [r.roomTypeId, r.rateId, r.quantity])),
         checkIn:       body.checkIn,
         checkOut:      body.checkOut,
       },
@@ -712,16 +790,16 @@ app.post('/checkout/resume', zValidator('json', z.object({
     const amountCents = Math.round(currentTotal * 100)
     if (amountCents <= 0) return c.json({ error: 'Importe inválido' }, 422)
 
-    // roomTypeId no se guarda en la propia reserva (solo viajaba en los
-    // metadatos de la sesión de Stripe original, que el webhook usa para
-    // asignar habitación al confirmar el pago) — se recupera de esa sesión
-    // (guardada en extraField1) para que la nueva sesión lo siga llevando y
-    // no se pierda la asignación automática de habitación al pagar.
-    let roomTypeId = ''
+    // El carrito (qué habitaciones/tarifas/cantidades) no se guarda en la
+    // propia reserva (solo viajaba en los metadatos de la sesión de Stripe
+    // original, que el webhook/booking-confirm usan para asignar
+    // habitación(es) al confirmar el pago) — se recupera de esa sesión
+    // (guardada en extraField1) para que la nueva sesión lo siga llevando.
+    let cart = ''
     if (res.extraField1) {
       try {
         const origSession = await s.checkout.sessions.retrieve(res.extraField1)
-        roomTypeId = origSession.metadata?.roomTypeId ?? ''
+        cart = origSession.metadata?.cart ?? ''
       } catch { /* sesión original ya no recuperable — se asignará habitación a mano */ }
     }
 
@@ -745,7 +823,7 @@ app.post('/checkout/resume', zValidator('json', z.object({
         property_id:   String(getPropertyId()),
         reservationId: String(res.id),
         guestId:       String(res.guestId),
-        roomTypeId,
+        cart,
         checkIn:       res.checkInDate,
         checkOut:      res.checkOutDate,
       },
@@ -879,7 +957,7 @@ async function stripeWebhookInTenant(c: any, body: string, sig: string) {
         await db.transaction(async (tx) => {
           const existing = await tx.query.reservations.findFirst({
             where: resWhere(reservationId),
-            columns: { amountPaid: true, total: true },
+            columns: { amountPaid: true, total: true, checkInDate: true },
           })
           const alreadyPaid   = parseFloat((existing?.amountPaid as string) ?? '0')
           const previousTotal = parseFloat((existing?.total as string) ?? '0')
@@ -899,6 +977,8 @@ async function stripeWebhookInTenant(c: any, body: string, sig: string) {
                 saleItemId: e.i,
                 quantity:   e.q as any,
                 unitPrice:  e.u.toFixed(2),
+                date:       existing?.checkInDate,
+                notes:      `Comprado en el portal del huésped — sesión ${session.id}`,
               }))
             )
           }
@@ -1038,41 +1118,31 @@ async function stripeWebhookInTenant(c: any, body: string, sig: string) {
       return c.json({ ok: true })
     }
 
-    // Asignar habitación disponible
-    const roomTypeId = parseInt(session.metadata?.roomTypeId ?? '0')
-    const checkIn    = session.metadata?.checkIn  as string
-    const checkOut   = session.metadata?.checkOut as string
+    // Asignar habitación(es) disponible(s) — metadata.cart es el carrito
+    // completo (ver POST /checkout); con reservas antiguas de antes de este
+    // cambio, metadata.cart no existe pero sí el roomTypeId suelto de
+    // entonces, así que se acepta como respaldo.
+    const checkIn  = session.metadata?.checkIn  as string
+    const checkOut = session.metadata?.checkOut as string
+    let cart: CartLine[] = []
+    try {
+      const raw = session.metadata?.cart
+      if (raw) cart = (JSON.parse(raw) as [number, number, number][]).map(([roomTypeId, , quantity]) => ({ roomTypeId, quantity }))
+      else if (session.metadata?.roomTypeId) cart = [{ roomTypeId: parseInt(session.metadata.roomTypeId), quantity: 1 }]
+    } catch (e) {
+      console.error('[stripe/webhook] metadata.cart no parseable', session.metadata?.cart, e)
+    }
 
-    const availableRoom = await db.execute(sql`
-      SELECT r.id FROM rooms r
-      WHERE r.room_type_id = ${roomTypeId} AND r.property_id = ${getPropertyId()} AND r.active = true
-        AND r.id NOT IN (
-          SELECT COALESCE(room_id, 0) FROM reservations
-          WHERE property_id = ${getPropertyId()} AND room_id IS NOT NULL
-            AND status NOT IN ('cancelled','no_show','tentative')
-            AND check_in_date < ${checkOut}::date AND check_out_date > ${checkIn}::date
-        )
-        AND r.id NOT IN (
-          SELECT jsonb_array_elements_text(extra_room_ids)::int FROM reservations
-          WHERE property_id = ${getPropertyId()} AND extra_room_ids IS NOT NULL
-            AND status NOT IN ('cancelled','no_show','tentative')
-            AND check_in_date < ${checkOut}::date AND check_out_date > ${checkIn}::date
-        )
-        AND r.id NOT IN (
-          SELECT bb.room_id FROM blocked_beds bb
-          WHERE bb.property_id = ${getPropertyId()}
-            AND bb.block_date >= ${checkIn}::date AND bb.block_date < ${checkOut}::date
-        )
-      LIMIT 1
-    `) as unknown as { id: number }[]
-
-    const roomId = availableRoom[0]?.id ?? null
+    const roomIds = await assignRoomsForCart(cart, checkIn, checkOut, getPropertyId())
+    const roomId       = roomIds[0] ?? null
+    const extraRoomIds = roomIds.slice(1)
     const amountPaid = (session.amount_total ?? 0) / 100
 
     await db.update(reservations)
       .set({
         status:     'confirmed',
         roomId,
+        extraRoomIds: extraRoomIds.length > 0 ? extraRoomIds : undefined,
         amountPaid: amountPaid.toFixed(2),
         updatedAt:  new Date(),
       } as any)
@@ -1474,37 +1544,26 @@ app.get('/booking/confirm', zValidator('query', z.object({
 
       if (alreadyPaid < 0.01) {
         const amountPaid  = (session.amount_total ?? 0) / 100
-        const roomTypeId  = parseInt(session.metadata?.roomTypeId ?? '0')
-        const checkIn     = session.metadata?.checkIn  as string
-        const checkOut    = session.metadata?.checkOut as string
+        const checkIn      = session.metadata?.checkIn  as string
+        const checkOut     = session.metadata?.checkOut as string
+        let cart: CartLine[] = []
+        try {
+          const raw = session.metadata?.cart
+          if (raw) cart = (JSON.parse(raw) as [number, number, number][]).map(([roomTypeId, , quantity]) => ({ roomTypeId, quantity }))
+          else if (session.metadata?.roomTypeId) cart = [{ roomTypeId: parseInt(session.metadata.roomTypeId), quantity: 1 }]
+        } catch (e) {
+          console.error('[booking/confirm] metadata.cart no parseable', session.metadata?.cart, e)
+        }
 
-        const availableRoom = await db.execute(sql`
-          SELECT r.id FROM rooms r
-          WHERE r.room_type_id = ${roomTypeId} AND r.property_id = ${getPropertyId()} AND r.active = true
-            AND r.id NOT IN (
-              SELECT COALESCE(room_id, 0) FROM reservations
-              WHERE property_id = ${getPropertyId()} AND room_id IS NOT NULL
-                AND status NOT IN ('cancelled','no_show','tentative')
-                AND check_in_date < ${checkOut}::date AND check_out_date > ${checkIn}::date
-            )
-            AND r.id NOT IN (
-              SELECT jsonb_array_elements_text(extra_room_ids)::int FROM reservations
-              WHERE property_id = ${getPropertyId()} AND extra_room_ids IS NOT NULL
-                AND status NOT IN ('cancelled','no_show','tentative')
-                AND check_in_date < ${checkOut}::date AND check_out_date > ${checkIn}::date
-            )
-            AND r.id NOT IN (
-              SELECT bb.room_id FROM blocked_beds bb
-              WHERE bb.property_id = ${getPropertyId()}
-                AND bb.block_date >= ${checkIn}::date AND bb.block_date < ${checkOut}::date
-            )
-          LIMIT 1
-        `) as unknown as { id: number }[]
+        const roomIds = await assignRoomsForCart(cart, checkIn, checkOut, getPropertyId())
+        const roomId       = roomIds[0] ?? null
+        const extraRoomIds = roomIds.slice(1)
 
         await db.update(reservations)
           .set({
             status:     'confirmed',
-            roomId:     availableRoom[0]?.id ?? null,
+            roomId,
+            extraRoomIds: extraRoomIds.length > 0 ? extraRoomIds : undefined,
             amountPaid: amountPaid.toFixed(2),
             updatedAt:  new Date(),
           } as any)

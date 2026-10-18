@@ -434,9 +434,13 @@ function OcupacionReport() {
 // /api/room-access/reservation.
 
 function RoomAccessVisitsReport() {
+  const navigate = useNavigate()
   const { from, to, appliedFrom, appliedTo, setFrom, setTo, applyDates, quickMonth } = useMonthRange()
   const [rows,    setRows]    = useState<Awaited<ReturnType<typeof api.getRoomAccessVisits>>['data']>([])
   const [meta,    setMeta]    = useState<Awaited<ReturnType<typeof api.getRoomAccessVisits>>['meta'] | null>(null)
+  const [byHour,        setByHour]        = useState<Awaited<ReturnType<typeof api.getRoomAccessVisits>>['byHour']>([])
+  const [byRoom,        setByRoom]        = useState<Awaited<ReturnType<typeof api.getRoomAccessVisits>>['byRoom']>([])
+  const [byReservation, setByReservation] = useState<Awaited<ReturnType<typeof api.getRoomAccessVisits>>['byReservation']>([])
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
 
@@ -446,6 +450,7 @@ function RoomAccessVisitsReport() {
     try {
       const r = await api.getRoomAccessVisits(appliedFrom, appliedTo)
       setRows(r.data); setMeta(r.meta)
+      setByHour(r.byHour); setByRoom(r.byRoom); setByReservation(r.byReservation)
     } catch (e: any) { setError(e.message) }
     finally { setLoading(false) }
   }, [appliedFrom, appliedTo])
@@ -475,33 +480,113 @@ function RoomAccessVisitsReport() {
         </div>
       )}
 
-      <div className="card">
-        {loading && <div style={{ textAlign: 'center', padding: 40, color: 'var(--text2)' }}>Cargando…</div>}
-        {error   && <div style={{ textAlign: 'center', padding: 20, color: 'var(--red)' }}>{error}</div>}
-        {!loading && !error && rows.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 40, color: 'var(--text2)' }}>Sin visitas registradas en el período</div>
-        )}
-        {!loading && !error && rows.length > 0 && (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th style={{ textAlign: 'right' }}>Visitas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.day}>
-                    <td>{fmtDate(r.day)}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.visits}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {loading && <div style={{ textAlign: 'center', padding: 40, color: 'var(--text2)' }}>Cargando…</div>}
+      {error   && <div style={{ textAlign: 'center', padding: 20, color: 'var(--red)' }}>{error}</div>}
+      {!loading && !error && rows.length === 0 && (
+        <div className="card"><div style={{ textAlign: 'center', padding: 40, color: 'var(--text2)' }}>Sin visitas registradas en el período</div></div>
+      )}
+      {!loading && !error && rows.length > 0 && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 16 }}>
+            <div className="card">
+              <div className="card-header"><h3 style={{ margin: 0, fontSize: 14 }}>Por día</h3></div>
+              <div className="table-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                <table className="data-table">
+                  <thead><tr><th>Fecha</th><th style={{ textAlign: 'right' }}>Visitas</th></tr></thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.day}>
+                        <td>{fmtDate(r.day)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.visits}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header"><h3 style={{ margin: 0, fontSize: 14 }}>Horas punta</h3></div>
+              <div className="table-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                <table className="data-table">
+                  <thead><tr><th>Hora</th><th style={{ textAlign: 'right' }}>Visitas</th></tr></thead>
+                  <tbody>
+                    {byHour.filter(h => h.visits > 0).map(h => (
+                      <tr key={h.hour}>
+                        <td>{String(h.hour).padStart(2, '0')}:00</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{h.visits}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-header"><h3 style={{ margin: 0, fontSize: 14 }}>Ranking de habitaciones</h3></div>
+            <div className="table-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+              <table className="data-table">
+                <thead><tr><th>Habitación</th><th style={{ textAlign: 'right' }}>Visitas</th></tr></thead>
+                <tbody>
+                  {byRoom.map(r => (
+                    <tr key={r.roomId ?? 'null'}>
+                      <td>{r.roomCode ?? '—'}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.visits}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <h3 style={{ margin: 0, fontSize: 14 }}>Reservas que usaron la web ({byReservation.length})</h3>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text2)', padding: '0 18px 10px' }}>
+              "Extras" cuenta cualquier extra comprado en la reserva (no se puede distinguir si fue desde esta
+              página o desde el portal por email). "Peticiones" son las de limpieza hechas desde aquí (no molestar / solo toallas / limpieza normal).
+            </p>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Huésped</th><th>Hab.</th><th style={{ textAlign: 'right' }}>Visitas</th>
+                    <th>Primera</th><th>Última</th>
+                    <th style={{ textAlign: 'right' }}>Extras</th><th>Peticiones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {byReservation.map(r => (
+                    <tr key={r.reservationId}>
+                      <td>
+                        <a href={`#/reservations/${r.reservationId}`} onClick={e => { e.preventDefault(); navigate(`/reservations/${r.reservationId}`) }}>
+                          {r.guestName}
+                        </a>
+                      </td>
+                      <td>{r.roomCodes}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.visits}</td>
+                      <td style={{ fontSize: 12 }}>{fmtDateTime(r.firstVisit)}</td>
+                      <td style={{ fontSize: 12 }}>{fmtDateTime(r.lastVisit)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        {r.extras.lines > 0 ? `${r.extras.lines} (${fmtEur(r.extras.total)})` : '—'}
+                      </td>
+                      <td style={{ fontSize: 12 }}>
+                        {[
+                          r.housekeeping.dnd        > 0 ? `🚫 No molestar ×${r.housekeeping.dnd}`        : null,
+                          r.housekeeping.towelsOnly  > 0 ? `🧺 Solo toallas ×${r.housekeeping.towelsOnly}` : null,
+                          r.housekeeping.clean       > 0 ? `🧹 Limpieza ×${r.housekeeping.clean}`          : null,
+                        ].filter(Boolean).join(' · ') || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </>
   )
 }

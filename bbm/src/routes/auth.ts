@@ -44,6 +44,7 @@ app.post('/login', zValidator('json', z.object({
       isPrimary: user.isPrimary ?? false,
       propertyId: user.propertyId,
       isPlatformAdmin: user.isPlatformAdmin ?? false,
+      sv:        user.sessionVersion,
       exp:       Math.floor(Date.now() / 1000) + SEVEN_DAYS,
     }, env.JWT_SECRET, 'HS256')
 
@@ -65,7 +66,7 @@ app.get('/me', async (c) => {
   try {
     const token = getCookie(c, COOKIE) ?? c.req.header('Authorization')?.replace('Bearer ', '')
     if (!token) return c.json({ data: null })
-    const payload = await verify(token, env.JWT_SECRET, 'HS256').catch(() => null)
+    const payload = await verify(token, env.JWT_SECRET, 'HS256').catch(() => null) as any
     if (!payload) return c.json({ data: null })
     const userId = Number(payload.sub)
     const user = await db.query.users.findFirst({
@@ -73,6 +74,10 @@ app.get('/me', async (c) => {
       with: { roles: true },
     })
     if (!user || !user.active) return c.json({ data: null })
+    // Mismo chequeo que requireAuth (src/middleware/auth.ts) — si Dirección ha
+    // forzado el cierre de sesión (incrementa session_version), /me no puede
+    // seguir diciendo que sigue conectado solo porque el JWT no ha caducado.
+    if (payload.sv !== undefined && payload.sv !== user.sessionVersion) return c.json({ data: null })
     return c.json({ data: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, roles: (user.roles as any[]).map(r => r.role), isPrimary: user.isPrimary, propertyId: Number(payload.propertyId) || user.propertyId, impersonating: payload.impersonating === true, isPlatformAdmin: user.isPlatformAdmin ?? false, avatarUrl: user.avatarUrl ?? null, simplifiedAdminMode: user.simplifiedAdminMode ?? false } })
   } catch { return c.json({ data: null }) }
 })

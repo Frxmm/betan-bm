@@ -75,6 +75,19 @@ export function getHotWaterReadings() {
   return poolFetch('/api/acs')
 }
 
+// ── Turnos del personal ──────────────────────────────────────────────────────
+// Turnos planificados (empleado_id, fecha, hora_inicio, hora_fin...) — usado
+// para saber si ha habido cambio de turno desde que se vio una alerta por
+// primera vez (ver src/routes/alerts.ts).
+export function getShifts(desde?: string, hasta?: string, empleadoId?: number) {
+  return poolFetch('/api/turnos', { desde, hasta, empleado_id: empleadoId })
+}
+
+// Solicitudes de vacaciones/ausencias (empleado_id, estado, fechas...).
+export function getVacations(empleadoId?: number, estado?: string, anio?: number) {
+  return poolFetch('/api/vacaciones', { empleado_id: empleadoId, estado, anio })
+}
+
 // ── Aljibe / tanque de agua ──────────────────────────────────────────────────
 export function getWaterTankStatus(rango?: 'dia' | 'semana' | 'mes', anio?: number, mes?: number) {
   return poolFetch('/api/tanque', { rango, anio, mes })

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth, canManage } from '../contexts/AuthContext'
 import { speak as speakText, SpeechRecognitionCtor } from '../lib/speech'
@@ -21,6 +21,15 @@ const SUGGESTIONS = ['Resumen de hoy', 'Llegadas de mañana', 'Busca a García',
 // La limpieza de texto (stripForSpeech) vive en ../lib/speech.ts, compartida
 // con AdminQuickStats.tsx.
 const TTS_KEY = 'af-tts-enabled'
+
+// Activación por voz — alternativa gratuita a Picovoice (dejó de funcionar
+// la app de Android y no tiene trial), usando el mismo Web Speech API nativo
+// que ya usa el dictado, en modo continuo: en vez de esperar una palabra
+// concreta (poco fiable transcribiendo una inventada como "Betan"), abre el
+// asistente directamente al detectar cualquier voz. Apagada por defecto,
+// por dispositivo (localStorage) — nadie debe quedarse escuchando el micro
+// sin haberlo encendido él mismo. Solo dirección, igual que el resto de voz.
+const WAKE_KEY = 'af-wake-enabled'
 
 // Cuánto esperar antes de volver a lanzar un chequeo proactivo (evita saludar
 // en cada recarga de página si el usuario deja el dashboard abierto todo el
@@ -130,6 +139,102 @@ export default function AgentFloat() {
     setListening(true)
     recognition.start()
   }
+
+  // Escucha continua — una SpeechRecognition aparte, en modo
+  // continuous, que se reinicia sola cada vez que el navegador la corta tras
+  // un rato de silencio (eso lo hace Chrome siempre, no es un fallo). Nunca
+  // corre a la vez que el dictado normal (son la misma API, un móvil/PC solo
+  // puede tener una sesión de reconocimiento activa) ni mientras se espera
+  // respuesta del asistente.
+  const [wakeEnabled, setWakeEnabled] = useState(() => {
+    try { return localStorage.getItem(WAKE_KEY) === '1' } catch { return false }
+  })
+  const [wakeActive, setWakeActive] = useState(false) // true mientras hay un reconocimiento de verdad escuchando (para el indicador)
+  const wakeRecognitionRef = useRef<any>(null)
+  const wakeShouldRunRef   = useRef(false)
+  // startWakeListener es estable (useCallback con deps []) para no reiniciar
+  // el micro en cada render — pero necesita llamar a la versión AL DÍA de
+  // toggleDictation (que cierra sobre `listening`/`send`/`msgs` de cada
+  // render), así que se guarda en un ref que se actualiza siempre, en vez de
+  // cerrar directamente sobre la función (que quedaría congelada en la del
+  // primer render y acabaría operando sobre un historial de mensajes vacío).
+  const toggleDictationRef = useRef(toggleDictation)
+  toggleDictationRef.current = toggleDictation
+
+  const startWakeListener = useCallback(() => {
+    if (!SpeechRecognitionCtor || wakeRecognitionRef.current) return
+    const recognition = new SpeechRecognitionCtor()
+    recognition.lang = 'es-ES'
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.onresult = (e: any) => {
+      // No reaccionar a la propia voz del asistente si suena por los altavoces.
+      if (window.speechSynthesis?.speaking) return
+      // Activación directa al oír cualquier cosa (ya no hace falta decir
+      // "Betan" — se renunció a filtrar por palabra, demasiado poco fiable
+      // transcribiendo una palabra inventada).
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const transcript = e.results[i][0].transcript.trim()
+        if (transcript.length >= 2) {
+          // Importante: desarmar el reinicio automático ANTES de parar, si
+          // no el propio onend de esta escucha la vuelve a lanzar sola
+          // mientras esperamos los 400ms, y compite por el micro con el
+          // dictado real que está por arrancar (eso cortaba el dictado casi
+          // al instante).
+          wakeShouldRunRef.current = false
+          try { recognition.stop() } catch {}
+          setOpen(true)
+          setTimeout(() => toggleDictationRef.current(), 400) // da tiempo a que el micro quede libre antes del dictado de verdad
+          return
+        }
+      }
+    }
+    recognition.onstart = () => setWakeActive(true)
+    recognition.onerror = (e: any) => {
+      // 'no-speech'/'aborted' son normales en modo continuo, no son un fallo
+      // real. El resto (permiso denegado, contexto no seguro, red...) sí
+      // importa verlo — si no, falla en silencio y parece que "no detecta".
+      if (e?.error && e.error !== 'no-speech' && e.error !== 'aborted') {
+        console.warn('[wake] error de reconocimiento:', e.error)
+      }
+    }
+    recognition.onend = () => {
+      // Chrome corta la sesión sola cada pocos segundos aunque sea
+      // `continuous`, por eso se reencadena al momento (no es un fallo, es
+      // cómo funciona la API) — sin retraso artificial, para dejar el hueco
+      // sin escuchar lo más corto posible.
+      setWakeActive(false)
+      wakeRecognitionRef.current = null
+      if (wakeShouldRunRef.current) startWakeListener()
+    }
+    wakeRecognitionRef.current = recognition
+    try { recognition.start() } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const toggleWake = () => {
+    setWakeEnabled(v => {
+      const next = !v
+      try { localStorage.setItem(WAKE_KEY, next ? '1' : '0') } catch {}
+      return next
+    })
+  }
+
+  // Arranca/para el escuchador según el interruptor, y lo pausa mientras haya
+  // dictado normal en curso o se esté esperando respuesta del asistente.
+  useEffect(() => {
+    if (canDictate && wakeEnabled && !listening && !loading) {
+      wakeShouldRunRef.current = true
+      startWakeListener()
+    } else {
+      wakeShouldRunRef.current = false
+      try { wakeRecognitionRef.current?.stop() } catch {}
+    }
+    return () => {
+      wakeShouldRunRef.current = false
+      try { wakeRecognitionRef.current?.stop() } catch {}
+    }
+  }, [canDictate, wakeEnabled, listening, loading, startWakeListener])
 
   useEffect(() => {
     return () => { try { recognitionRef.current?.stop() } catch {} }
@@ -295,6 +400,7 @@ export default function AgentFloat() {
         ✦
         {unread && !open && <span className="af-badge af-badge-dot" />}
         {!unread && msgs.length > 0 && !open && <span className="af-badge">{msgs.filter(m => m.role === 'assistant').length}</span>}
+        {wakeActive && !open && <span className="af-badge af-badge-dot af-badge-wake" title="Escuchando…" />}
       </button>
 
       {/* Panel flotante */}
@@ -305,6 +411,16 @@ export default function AgentFloat() {
             {canUseVoice && (
               <button className="af-icon-btn" onClick={toggleTts} title={ttsEnabled ? 'Voz activada — click para silenciar' : 'Voz desactivada — click para activar'}>
                 {ttsEnabled ? '🔊' : '🔇'}
+              </button>
+            )}
+            {canDictate && (
+              <button
+                className="af-icon-btn"
+                onClick={toggleWake}
+                title={wakeEnabled ? 'Activación por voz activada (se abre al oír cualquier cosa) — click para desactivar' : 'Activar: se abre el asistente en cuanto detecte voz — click para activar'}
+                style={wakeEnabled ? { color: 'var(--accent, #6366f1)' } : undefined}
+              >
+                {wakeEnabled ? '👂' : '🙉'}
               </button>
             )}
             <button className="af-icon-btn" onClick={toggleHistory} title="Sesiones anteriores">🕘</button>

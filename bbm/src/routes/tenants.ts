@@ -16,7 +16,7 @@ import { serverError } from '../lib/errors'
 import { requireAdmin } from '../middleware/auth'
 import { requirePlatformAdmin } from '../middleware/tenant'
 import {
-  ALL_FEATURES, DEFAULT_ON, featureOf, brandingOf, invalidateProperty, runWithProperty, type FeatureKey,
+  ALL_FEATURES, DEFAULT_ON, featureOf, brandingOf, invalidateProperty, runWithProperty, settingOf, type FeatureKey,
 } from '../lib/property'
 import { seedTenant } from '../lib/tenantSeed'
 import { sendPasswordResetLink } from '../lib/passwordReset'
@@ -36,7 +36,7 @@ export const MODULES: Record<FeatureKey, { label: string; group: string; descrip
   fdm:           { label: 'FDM', group: 'Distribución', description: 'Importación y envío de datos al sistema FDM.', secrets: [
     { name: 'FDM_USERNAME', label: 'Usuario' }, { name: 'FDM_PASSWORD', label: 'Contraseña' }, { name: 'FDM_CM_TOKEN', label: 'Token channel manager' } ] },
   jumbo:         { label: 'Jumbo', group: 'Distribución', description: 'Integración con el operador Jumbo (contratos y precios).', secrets: [
-    { name: 'JUMBO_LOGIN', label: 'Usuario' }, { name: 'JUMBO_PASSWORD', label: 'Contraseña' } ] },
+    { name: 'JUMBO_LOGIN', label: 'Usuario' }, { name: 'JUMBO_PASSWORD', label: 'Contraseña' }, { name: 'JUMBO_INTEGRATION_TOKEN', label: 'Token de la integración de correo' } ] },
   pricingRules:  { label: 'Reglas de precios', group: 'Revenue', description: 'Ajuste automático de precios según ocupación y reglas.', secrets: [] },
   competitors:   { label: 'Competencia', group: 'Revenue', description: 'Seguimiento de precios de la competencia.', secrets: [
     { name: 'SERPAPI_API_KEY', label: 'Clave SerpAPI' }, { name: 'GOOGLE_PLACES_API_KEY', label: 'Clave Google Places' } ] },
@@ -50,6 +50,7 @@ export const MODULES: Record<FeatureKey, { label: string; group: string; descrip
   pool:          { label: 'Piscina', group: 'Operaciones', description: 'Control de aforo/acceso de la piscina.', secrets: [
     { name: 'POOL_API_URL', label: 'URL de la API' }, { name: 'POOL_API_KEY', label: 'Clave de API' } ] },
   laundry:       { label: 'Lavandería', group: 'Operaciones', description: 'Gestión de lavandería y ropa de cama.', secrets: [] },
+  liveMap:       { label: 'Plano en tiempo real', group: 'Operaciones', description: 'Plano del establecimiento con estado de limpieza y ocupación (requiere cargar los planos del tenant en data/floorplans/<slug>/).', secrets: [] },
   cashDrawer:    { label: 'Caja de cambio', group: 'Operaciones', description: 'Arqueos y control de la caja de cambio.', secrets: [] },
   whatsapp:      { label: 'WhatsApp', group: 'Comunicación', description: 'Mensajes automáticos al huésped por WhatsApp Business.', secrets: [
     { name: 'WHATSAPP_TOKEN', label: 'Token de acceso' }, { name: 'WHATSAPP_PHONE_ID', label: 'ID del teléfono' } ] },
@@ -433,6 +434,8 @@ propertyRoutes.get('/', async (c) => {
     const jwt = c.get('jwtPayload') as any
     return c.json({ data: {
       ...brandingOf(p), features: featureMap(p),
+      // Aviso diario de recepción (settings ui.dailyReminder = { enabled, title?, body? })
+      dailyReminder: settingOf<{ enabled?: boolean; title?: string; body?: string }>(p, 'ui.dailyReminder') ?? null,
       impersonating: jwt?.impersonating === true,
     } })
   } catch (err) { return serverError(c, err) }

@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth, canManage } from '../contexts/AuthContext'
+import { api } from '../lib/api'
 
 const EVENT_LABELS: Record<string, string> = {
   '0':  'Acceso normal',         '1':  'Contraseña incorrecta',
@@ -24,7 +25,7 @@ function eventColor(type: number): { bg: string; color: string } {
 }
 
 interface Status { configured: boolean; reachable?: boolean; ip?: string; firmware?: string }
-interface Card { user_id: string; name: string; card_number: string; room_code: string | null }
+interface Card { user_id: string; name: string; card_number: string; room_code: string | null; card_type?: 'employee' | 'temp' | 'reservation'; note?: string }
 interface AccessEvent {
   id: number; timestamp: string; door: number | null
   card_no: string | null; user_id: string | null
@@ -95,11 +96,277 @@ function FilterBar({ children, active, onClear }: { children: React.ReactNode; a
   )
 }
 
+type EnrollType = 'employee' | 'temp' | 'reservation'
+
+interface ResvInfo { id: number; guest_name: string; room: string; check_in: string; check_out: string; card_count: number; next_pin: string }
+
+function EnrollarTab({ apiFetch, ok, setError, onDone, cards }: {
+  apiFetch: (path: string, opts?: RequestInit) => Promise<any>
+  ok: (msg: string) => void
+  setError: (e: string | null) => void
+  onDone: () => void
+  cards: Card[]
+}) {
+  const [type,        setType]        = useState<EnrollType>('employee')
+  const [cardNumber,  setCardNumber]  = useState('')
+  const [saving,      setSaving]      = useState(false)
+  const [revokingId,  setRevokingId]  = useState<string | null>(null)
+
+  // Empleado
+  const [employees,   setEmployees]   = useState<Array<{ id: number; firstName: string; lastName: string; roles: string[] }>>([])
+  const [employeeId,  setEmployeeId]  = useState<number | ''>('')
+
+  // Temporal
+  const [tempName,    setTempName]    = useState('')
+  const [tempPin,     setTempPin]     = useState('')
+
+  // Reserva
+  const [resvId,      setResvId]      = useState('')
+  const [resvInfo,    setResvInfo]    = useState<ResvInfo | null>(null)
+  const [lookingUp,   setLookingUp]   = useState(false)
+  const lookupTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    api.listUsers().then(r => setEmployees(r.data ?? [])).catch(() => {})
+  }, [])
+
+  // Auto-lookup reserva al escribir el ID
+  useEffect(() => {
+    setResvInfo(null)
+    if (!resvId || !/^\d+$/.test(resvId)) return
+    if (lookupTimeout.current) clearTimeout(lookupTimeout.current)
+    lookupTimeout.current = setTimeout(async () => {
+      setLookingUp(true)
+      try {
+        const d = await apiFetch(`/api/zkteco/enroller/${resvId}`)
+        setResvInfo(d.data ?? null)
+      } catch { setResvInfo(null) }
+      finally { setLookingUp(false) }
+    }, 400)
+  }, [resvId])
+
+  const inputStyle: React.CSSProperties = {
+    padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)',
+    background: 'var(--bg1, var(--bg))', color: 'var(--text1)', fontSize: 14, outline: 'none', width: '100%',
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true); setError(null)
+    const rawCard = cardNumber.trim().replace(/^0+/, '') || cardNumber.trim()
+    if (!rawCard || !/^\d+$/.test(rawCard)) { setError('El número de tarjeta debe ser decimal'); setSaving(false); return }
+    try {
+      if (type === 'employee') {
+        if (!employeeId) { setError('Selecciona un empleado'); setSaving(false); return }
+        const d = await apiFetch('/api/zkteco/enroll', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'employee', cardNumber: rawCard, employeeId }),
+        })
+        ok(`Tarjeta enrollada para ${d.data.name} (PIN ${d.data.pin})`); reset()
+      } else if (type === 'temp') {
+        if (!tempName.trim()) { setError('Introduce un nombre'); setSaving(false); return }
+        const pin = tempPin.trim() || undefined
+        const d = await apiFetch('/api/zkteco/enroll', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'temp', cardNumber: rawCard, name: tempName.trim(), pin }),
+        })
+        ok(`Tarjeta temporal enrollada (PIN ${d.data.pin})`); reset()
+      } else {
+        if (!resvInfo) { setError('Busca primero una reserva válida'); setSaving(false); return }
+        await apiFetch(`/api/zkteco/enroller/${resvInfo.id}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ card_no: rawCard }),
+        })
+        const label = resvInfo.card_count === 0 ? 'Tarjeta enrollada' : `Tarjeta extra enrollada (${resvInfo.card_count + 1}ª)`
+        ok(`${label} en reserva #${resvInfo.id} — ${resvInfo.guest_name}`); reset()
+      }
+      onDone()
+    } catch (e: any) { setError(e.message) }
+    finally { setSaving(false) }
+  }
+
+  function reset() {
+    setCardNumber(''); setEmployeeId(''); setTempName(''); setTempPin('')
+    setResvId(''); setResvInfo(null)
+  }
+
+  async function handleRevoke(userId: string, name: string) {
+    if (!confirm(`¿Revocar acceso de "${name}" (PIN ${userId})?`)) return
+    setRevokingId(userId)
+    try {
+      await apiFetch(`/api/zkteco/cards/${userId}`, { method: 'DELETE' })
+      ok(`Tarjeta de ${name} revocada`); onDone()
+    } catch (e: any) { setError(e.message) }
+    finally { setRevokingId(null) }
+  }
+
+  const manualCards = cards.filter(c => c.card_type === 'employee' || c.card_type === 'temp')
+
+  const thM: React.CSSProperties = { fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text3)', padding: '8px 12px', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }
+  const tdM = (extra?: React.CSSProperties): React.CSSProperties => ({ padding: '9px 12px', borderBottom: '1px solid var(--border-subtle, var(--border))', fontSize: 13, verticalAlign: 'middle', ...extra })
+
+  const typeBtn = (t: EnrollType, label: string) => (
+    <button type="button"
+      onClick={() => { setType(t); reset() }}
+      style={{
+        padding: '7px 18px', borderRadius: 8, border: '1px solid var(--border)',
+        cursor: 'pointer', fontSize: 13, fontWeight: 600,
+        background: type === t ? 'var(--accent)' : 'var(--bg2)',
+        color: type === t ? '#fff' : 'var(--text1)',
+        transition: 'all .15s',
+      }}>
+      {label}
+    </button>
+  )
+
+  return (
+    <>
+    <div className="card" style={{ maxWidth: 520 }}>
+      <h2 style={{ margin: '0 0 20px', fontSize: 15, fontWeight: 600 }}>Enrollar tarjeta manualmente</h2>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+        {typeBtn('employee',    'Empleado')}
+        {typeBtn('temp',        'Temporal')}
+        {typeBtn('reservation', 'Reserva')}
+      </div>
+
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+        {type === 'employee' && (
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+            <span style={{ fontWeight: 600 }}>Empleado</span>
+            <select style={{ ...inputStyle }} value={employeeId} onChange={e => setEmployeeId(Number(e.target.value) || '')}>
+              <option value="">— Selecciona un empleado —</option>
+              {employees.map(u => (
+                <option key={u.id} value={u.id}>
+                  {u.firstName} {u.lastName} ({u.roles.join(', ')})
+                </option>
+              ))}
+            </select>
+            {employeeId !== '' && (
+              <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+                PIN ZKTeco: {90_000_000_000 + Number(employeeId)}
+              </span>
+            )}
+          </label>
+        )}
+
+        {type === 'temp' && (
+          <>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+              <span style={{ fontWeight: 600 }}>Nombre</span>
+              <input style={inputStyle} placeholder="Ej: Técnico instalación, Visita proveedor…"
+                value={tempName} onChange={e => setTempName(e.target.value)} />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+              <span style={{ fontWeight: 600 }}>PIN ZKTeco <span style={{ fontWeight: 400, color: 'var(--text2)' }}>(opcional — se auto-genera si se deja vacío)</span></span>
+              <input style={inputStyle} placeholder="Ej: 9999 — solo dígitos, máx. 10"
+                value={tempPin} onChange={e => setTempPin(e.target.value.replace(/\D/g, '').slice(0, 10))} />
+            </label>
+          </>
+        )}
+
+        {type === 'reservation' && (
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+            <span style={{ fontWeight: 600 }}>Nº de reserva</span>
+            <input style={inputStyle} placeholder="ID de reserva…"
+              value={resvId} onChange={e => setResvId(e.target.value.replace(/\D/g, ''))} />
+            {lookingUp && <span style={{ fontSize: 12, color: 'var(--text2)' }}>Buscando…</span>}
+            {resvInfo && (
+              <div style={{ marginTop: 4, padding: '8px 12px', background: 'var(--bg2)', borderRadius: 8, fontSize: 12, lineHeight: 1.6 }}>
+                <strong>{resvInfo.guest_name || '—'}</strong> · Hab. {resvInfo.room || '—'}<br />
+                {resvInfo.check_in} → {resvInfo.check_out}
+                {resvInfo.card_count > 0 && (
+                  <span style={{ marginLeft: 8, color: 'var(--yellow, #d97706)', fontWeight: 600 }}>
+                    ⚠ {resvInfo.card_count} tarjeta{resvInfo.card_count > 1 ? 's' : ''} ya enrollada{resvInfo.card_count > 1 ? 's' : ''} — se añadirá una más
+                  </span>
+                )}
+              </div>
+            )}
+            {resvId && !lookingUp && !resvInfo && (
+              <span style={{ fontSize: 12, color: 'var(--red, #ef4444)' }}>Reserva no encontrada</span>
+            )}
+          </label>
+        )}
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+          <span style={{ fontWeight: 600 }}>Nº de tarjeta <span style={{ fontWeight: 400, color: 'var(--text2)' }}>(decimal — como aparece en el lector)</span></span>
+          <input style={inputStyle} placeholder="Ej: 5533773"
+            value={cardNumber} onChange={e => setCardNumber(e.target.value.replace(/\D/g, ''))} />
+        </label>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button type="button" className="btn btn-ghost" onClick={reset} disabled={saving}>Limpiar</button>
+          <button type="submit" className="btn btn-primary" disabled={saving || !cardNumber}>
+            {saving ? 'Enrollando…' : 'Enrollar tarjeta'}
+          </button>
+        </div>
+      </form>
+    </div>
+
+    {/* Lista de tarjetas manuales (empleado + temporal) */}
+    <div className="card" style={{ marginTop: 20 }}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 600 }}>
+        Tarjetas enrolladas manualmente
+        {manualCards.length > 0 && (
+          <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--text2)', fontSize: 13 }}>{manualCards.length}</span>
+        )}
+      </h2>
+      {manualCards.length === 0 ? (
+        <p style={{ color: 'var(--text2)', fontSize: 13, margin: 0 }}>No hay tarjetas de empleado ni temporales registradas</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: 'var(--bg2)' }}>
+                <th style={thM}>Tipo</th>
+                <th style={thM}>Nombre</th>
+                <th style={thM}>PIN ZKTeco</th>
+                <th style={thM}>Nº Tarjeta</th>
+                <th style={thM}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {manualCards.map(c => (
+                <tr key={c.user_id} style={{ transition: 'background .1s' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg2)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                  <td style={tdM()}>
+                    {c.card_type === 'employee' ? (
+                      <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: 'rgba(34,197,94,.15)', color: 'var(--green)' }}>Empleado</span>
+                    ) : (
+                      <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: 'rgba(245,158,11,.15)', color: 'var(--yellow, #d97706)' }}>Temporal</span>
+                    )}
+                  </td>
+                  <td style={tdM()}>{c.name || '—'}</td>
+                  <td style={tdM()}>
+                    <code style={{ fontSize: 11, color: 'var(--text2)' }}>{c.user_id}</code>
+                  </td>
+                  <td style={tdM()}>
+                    <code style={{ fontSize: 11, color: 'var(--text2)' }}>{c.card_number}</code>
+                  </td>
+                  <td style={tdM({ textAlign: 'right' })}>
+                    <button className="btn btn-danger btn-xs" disabled={revokingId === c.user_id}
+                      onClick={() => handleRevoke(c.user_id, c.name)}>
+                      {revokingId === c.user_id ? '…' : 'Revocar'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+    </>
+  )
+}
+
 export default function ZktecoView() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const admin = canManage(user)
-  const [tab, setTab] = useState<'tarjetas' | 'accesos' | 'config'>('tarjetas')
+  const [tab, setTab] = useState<'tarjetas' | 'accesos' | 'enrollar' | 'config'>('tarjetas')
   const [status,      setStatus]      = useState<Status | null>(null)
   const [events,      setEvents]      = useState<AccessEvent[]>([])
   const [cards,       setCards]       = useState<Card[]>([])
@@ -170,6 +437,11 @@ export default function ZktecoView() {
     return { lastSeenMap: ls, usageCountMap: uc }
   }, [events])
 
+  // user_id → card info (para mostrar nombre de empleados/temporales en el log)
+  const cardInfoMap = useMemo(() =>
+    Object.fromEntries(cards.map(c => [c.user_id, c]))
+  , [cards])
+
   const filteredCards = useMemo(() => {
     const q = cardSearch.toLowerCase()
     const now = Date.now()
@@ -189,7 +461,7 @@ export default function ZktecoView() {
   const filteredEvents = useMemo(() => {
     const q = evtSearch.toLowerCase()
     return events.filter(e => {
-      if (q && !e.card_no?.toLowerCase().includes(q) && !e.user_id?.toLowerCase().includes(q)) return false
+      if (q && !e.card_no?.toLowerCase().includes(q) && !e.user_id?.toLowerCase().includes(q) && !e.room_code?.toLowerCase().includes(q)) return false
       if (evtDoor > 0 && e.door !== evtDoor) return false
       if (evtType === 'access' && e.event_type !== 0) return false
       if (evtType === 'error'  && e.event_type === 0) return false
@@ -281,6 +553,11 @@ export default function ZktecoView() {
           Accesos
         </button>
         {admin && (
+          <button className={`hk-tab${tab === 'enrollar' ? ' active' : ''}`} onClick={() => setTab('enrollar')}>
+            Enrollar tarjeta
+          </button>
+        )}
+        {admin && (
           <button className={`hk-tab${tab === 'config' ? ' active' : ''}`} onClick={() => setTab('config')}>
             Configuración
           </button>
@@ -365,10 +642,18 @@ export default function ZktecoView() {
                         onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg2)')}
                         onMouseLeave={e => (e.currentTarget.style.background = '')}>
                         <td style={td()}>
-                          <a href="#" onClick={e => { e.preventDefault(); navigate(`/reservations/${c.user_id}`) }}
-                            style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
-                            #{c.user_id}
-                          </a>
+                          {c.card_type === 'employee' || c.card_type === 'temp'
+                            ? <code style={{ fontSize: 11, color: 'var(--text2)' }}>{c.user_id}</code>
+                            : (() => {
+                                const pin = Number(c.user_id)
+                                const resvId = pin >= 1_000_000_000 ? String(pin % 1_000_000_000) : c.user_id
+                                return (
+                                  <a href="#" onClick={e => { e.preventDefault(); navigate(`/reservations/${resvId}`) }}
+                                    style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
+                                    #{resvId}{pin >= 1_000_000_000 && <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 3 }}>+ext</span>}
+                                  </a>
+                                )
+                              })()}
                         </td>
                         <td style={td()}>
                           {c.room_code
@@ -439,7 +724,7 @@ export default function ZktecoView() {
           active={!!(evtSearch || evtDoor > 0 || evtType !== 'all' || evtDir !== 'all')}
           onClear={() => { setEvtSearch(''); setEvtDoor(0); setEvtType('all'); setEvtDir('all'); setEventsPage(0) }}
         >
-          <input style={{ ...inputStyle, minWidth: 180 }} placeholder="Tarjeta o reserva…"
+          <input style={{ ...inputStyle, minWidth: 180 }} placeholder="Tarjeta, reserva o habitación…"
             value={evtSearch} onChange={e => { setEvtSearch(e.target.value); setEventsPage(0) }} />
           <select style={selectStyle} value={evtDoor} onChange={e => { setEvtDoor(Number(e.target.value)); setEventsPage(0) }}>
             <option value={0}>Todas las puertas</option>
@@ -508,10 +793,31 @@ export default function ZktecoView() {
                           </code>
                         </td>
                         <td style={td()}>
-                          {e.user_id && e.user_id !== '0'
-                            ? <a href="#" onClick={ev => { ev.preventDefault(); navigate(`/reservations/${e.user_id}`) }}
-                                style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>#{e.user_id}</a>
-                            : <span style={{ color: 'var(--text3)' }}>—</span>}
+                          {(() => {
+                            const uid = e.user_id
+                            if (!uid || uid === '0') return <span style={{ color: 'var(--text3)' }}>—</span>
+                            const cardInfo = cardInfoMap[uid]
+                            if (cardInfo?.card_type === 'employee' || cardInfo?.card_type === 'temp') {
+                              return (
+                                <span style={{ fontSize: 12 }}>
+                                  <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600, marginRight: 5,
+                                    background: cardInfo.card_type === 'employee' ? 'rgba(34,197,94,.15)' : 'rgba(245,158,11,.15)',
+                                    color:      cardInfo.card_type === 'employee' ? 'var(--green)'         : 'var(--yellow, #d97706)' }}>
+                                    {cardInfo.card_type === 'employee' ? 'Emp.' : 'Temp.'}
+                                  </span>
+                                  {cardInfo.name || uid}
+                                </span>
+                              )
+                            }
+                            const pin = Number(uid)
+                            const resvId = pin >= 1_000_000_000 ? String(pin % 1_000_000_000) : uid
+                            return (
+                              <a href="#" onClick={ev => { ev.preventDefault(); navigate(`/reservations/${resvId}`) }}
+                                style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>
+                                #{resvId}{pin >= 1_000_000_000 && <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 3 }}>+ext</span>}
+                              </a>
+                            )
+                          })()}
                         </td>
                         <td style={td()}>
                           {e.room_code
@@ -566,6 +872,11 @@ export default function ZktecoView() {
         )}
       </div>
 
+      )}
+
+      {/* ── Pestaña Enrollar tarjeta (solo admin) ── */}
+      {tab === 'enrollar' && admin && (
+        <EnrollarTab apiFetch={apiFetch} ok={ok} setError={setError} onDone={loadCards} cards={cards} />
       )}
 
       {/* ── Pestaña Configuración (solo admin) ── */}

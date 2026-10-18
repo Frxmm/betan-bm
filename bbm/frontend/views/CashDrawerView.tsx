@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { toast } from '../lib/utils'
+import { toast, relativeDate } from '../lib/utils'
 
 // ─── Caja de cambio: arqueo por denominaciones + gastos por reponer ────────────
 
@@ -263,6 +263,7 @@ export default function CashDrawerView() {
                   </div>
                   <span style={{ color: 'var(--text2)' }}>{d.guestName}</span>
                   <span style={{ color: 'var(--text2)' }}>Hab. {d.roomCode ?? '—'}</span>
+                  <span style={{ color: 'var(--text2)' }}>Salida: {relativeDate(d.checkOutDate)}</span>
                 </label>
               )
             })}

@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /docs/
+Disallow: /panel
+
+Sitemap: https://www.betanbm.com/sitemap.xml

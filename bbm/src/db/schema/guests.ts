@@ -47,6 +47,10 @@ export const guests = pgTable('guests', {
   // Multimedia
   photoUrl:            text('photo_url'),
   documentUrl:         text('document_url'),
+  // Escaneo de documento de identidad (Escaneo IDs) — cuándo y quién guardó
+  // los datos leídos de la foto, para la lista de "Ya realizados hoy"
+  idDocScannedAt:      timestamp('id_doc_scanned_at', { withTimezone: true }),
+  idDocScannedBy:      integer('id_doc_scanned_by').references(() => users.id),
   // Auditoría
   createdAt:           timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:           timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

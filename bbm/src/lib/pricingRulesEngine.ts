@@ -438,7 +438,20 @@ async function computeDemandPulseDiscounts(
         // solo entra si esa fecha no tiene suelo calculado (caso raro).
         const floorPct = floorPctByDate.get(date) ?? PULSE_SANITY_MAX_DISCOUNT_PCT
         const targetDiscount = Math.min(PULSE_SANITY_MAX_DISCOUNT_PCT, floorPct, targetSteps * stepDownPct)
-        if (targetDiscount > discountPct) { discountPct = targetDiscount; silenceStartAt = anchor }
+        if (targetDiscount > discountPct) {
+          // Nunca más de un escalón de bajada por pasada, aunque el silencio
+          // acumulado desde la última reserva real ya "deba" varios de golpe
+          // (motor parado un rato, regla recién activada, fecha que lleva
+          // días sin ninguna reserva...) — si no, la primera vez que se
+          // evalúa una fecha con mucho silencio acumulado metía todos los
+          // escalones pendientes en un único cambio de precio (visto en
+          // producción: 57,99€ → 40,59€ de golpe, un -30% en una sola fila
+          // del historial en vez de 6 bajadas de -5%). Con el tope, si sigue
+          // sin haber reservas nuevas, la siguiente pasada sube otro escalón
+          // hasta alcanzar targetDiscount — progresivo de verdad.
+          discountPct = Math.min(targetDiscount, discountPct + stepDownPct)
+          silenceStartAt = anchor
+        }
       }
     }
 

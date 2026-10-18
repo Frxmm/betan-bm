@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, type Reservation } from '../lib/api'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth, canManage } from '../contexts/AuthContext'
+import { toast } from '../lib/utils'
 import AgentFloat from './AgentFloat'
 
 const TITLE_MAP: Record<string, string> = {
@@ -18,6 +19,7 @@ const TITLE_MAP: Record<string, string> = {
   '/agent':          'Asistente IA',
   '/settings':       'Apariencia',
   '/alerts':         'Alertas',
+  '/live-map':       'Tiempo Real',
 }
 
 const TODAY = new Date().toLocaleDateString('es-ES', {
@@ -40,6 +42,7 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
   const [open, setOpen]         = useState(false)
   const [active, setActive]     = useState(-1)
   const [online, setOnline]     = useState<{ id: number; name: string }[]>([])
+  const [loggingOut, setLoggingOut] = useState<Set<number>>(new Set())
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Ping de presencia + poll de usuarios conectados
@@ -54,6 +57,20 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
     const iv = setInterval(ping, 60_000)
     return () => clearInterval(iv)
   }, [user])
+
+  const forceLogout = async (u: { id: number; name: string }) => {
+    if (!confirm(`¿Cerrar la sesión de ${u.name}? Se quedará desconectado al instante, tenga lo que tenga abierto.`)) return
+    setLoggingOut(prev => new Set([...prev, u.id]))
+    try {
+      await api.forceLogoutUser(u.id)
+      toast(`Sesión de ${u.name} cerrada`)
+      setOnline(prev => prev.filter(o => o.id !== u.id))
+    } catch (e: any) {
+      toast(e.message ?? 'No se pudo cerrar la sesión', 'err')
+    } finally {
+      setLoggingOut(prev => { const next = new Set(prev); next.delete(u.id); return next })
+    }
+  }
 
   const title = location.pathname.startsWith('/reservations/')
     ? `Reserva #${location.pathname.split('/').pop()}`
@@ -130,16 +147,24 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
 
       {online.length > 0 && (
         <div className="topbar-presence" title={online.map(u => u.name).join(', ')}>
-          {online.slice(0, 5).map(u => (
-            <span
-              key={u.id}
-              className="topbar-avatar"
-              style={{ background: avatarColor(u.id) }}
-              title={u.name}
-            >
-              {initials(u.name)}
-            </span>
-          ))}
+          {online.slice(0, 5).map(u => {
+            const canKick = canManage(user) && u.id !== user?.id
+            return (
+              <span
+                key={u.id}
+                className="topbar-avatar"
+                style={{
+                  background: avatarColor(u.id),
+                  cursor: canKick ? 'pointer' : undefined,
+                  opacity: loggingOut.has(u.id) ? 0.5 : 1,
+                }}
+                title={canKick ? `${u.name} — clic para cerrarle la sesión` : u.name}
+                onClick={canKick ? () => forceLogout(u) : undefined}
+              >
+                {initials(u.name)}
+              </span>
+            )
+          })}
           {online.length > 5 && (
             <span className="topbar-avatar" style={{ background: '#64748b' }}>+{online.length - 5}</span>
           )}

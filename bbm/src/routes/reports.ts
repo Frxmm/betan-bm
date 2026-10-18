@@ -5,11 +5,11 @@ import { db } from '../db'
 import {
   reservations, rooms, roomTypes, rates, rateDailyPrices, bookingChannels, housekeepingTasks, breakfastNoService,
   laundryDeliveries, laundryProcessBatches, laundryProcessItems, users, abandonedCarts, cancellationRecoveries,
-  paymentDateCorrections, financialTransactions,
+  paymentDateCorrections, financialTransactions, reservationSaleItems,
 } from '../db/schema'
 import { eq, and, lte, gte, or, inArray, desc, sql as drizzleSql } from 'drizzle-orm'
 import { serverError } from '../lib/errors'
-import { getPropertyId, getSetting } from '../lib/property'
+import { getPropertyId, getSetting, getBranding } from '../lib/property'
 import { isAdmin } from '../middleware/auth'
 import { isoWeek, periodKey, periodLabel, computeOccupancyReport } from '../lib/occupancyReport'
 import { resolvePrice, rateChainIds, roomTypeChainIds } from '../lib/price-resolver'
@@ -137,7 +137,110 @@ app.get('/room-access-visits', zValidator('query', z.object({
     const avgPerDay      = spanDays > 0 ? Math.round((totalVisits / spanDays) * 10) / 10 : 0
     const busiestDay     = rows.reduce((best, r) => (!best || r.visits > best.visits ? r : best), null as { day: string; visits: number } | null)
 
-    return c.json({ data: rows, meta: { totalVisits, daysWithVisits, avgPerDay, busiestDay } })
+    // Horas punta — a qué hora del día (zona horaria del tenant) se usa más el QR.
+    const tz = (await getBranding()).timezone
+    const byHour = await db.execute(drizzleSql`
+      SELECT EXTRACT(HOUR FROM visited_at AT TIME ZONE ${tz})::int AS hour, COUNT(*)::int AS visits
+      FROM room_access_visits
+      WHERE property_id = ${getPropertyId()} AND visited_at::date >= ${from}::date AND visited_at::date <= ${to}::date
+      GROUP BY hour ORDER BY hour
+    `) as unknown as { hour: number; visits: number }[]
+
+    // Ranking de habitaciones más escaneadas.
+    const byRoom = await db.execute(drizzleSql`
+      SELECT v.room_id AS "roomId", r.code AS "roomCode", COUNT(*)::int AS visits
+      FROM room_access_visits v
+      LEFT JOIN rooms r ON r.id = v.room_id
+      WHERE v.property_id = ${getPropertyId()} AND v.visited_at::date >= ${from}::date AND v.visited_at::date <= ${to}::date
+      GROUP BY v.room_id, r.code
+      ORDER BY visits DESC
+    `) as unknown as { roomId: number | null; roomCode: string | null; visits: number }[]
+
+    // Qué reservas en concreto usaron la web, con sus habitaciones, nº de
+    // visitas y primera/última visita.
+    const byReservationRaw = await db.execute(drizzleSql`
+      SELECT v.reservation_id AS "reservationId",
+             g.first_name AS "firstName", g.last_name AS "lastName",
+             string_agg(DISTINCT r.code, ', ' ORDER BY r.code) AS "roomCodes",
+             COUNT(*)::int AS visits,
+             MIN(v.visited_at) AS "firstVisit", MAX(v.visited_at) AS "lastVisit"
+      FROM room_access_visits v
+      LEFT JOIN rooms r         ON r.id = v.room_id
+      LEFT JOIN reservations res ON res.id = v.reservation_id AND res.property_id = ${getPropertyId()}
+      LEFT JOIN guests g         ON g.id = res.guest_id
+      WHERE v.property_id = ${getPropertyId()} AND v.visited_at::date >= ${from}::date AND v.visited_at::date <= ${to}::date
+        AND v.reservation_id IS NOT NULL
+      GROUP BY v.reservation_id, g.first_name, g.last_name
+      ORDER BY visits DESC
+    `) as unknown as {
+      reservationId: number; firstName: string | null; lastName: string | null
+      roomCodes: string | null; visits: number; firstVisit: string; lastVisit: string
+    }[]
+
+    const resIds = byReservationRaw.map(r => r.reservationId)
+
+    // Extras comprados por esas reservas — no se puede saber si fue desde el
+    // QR de habitación o desde el portal por email (ninguno de los dos
+    // guarda el origen), así que es "compró algún extra", no "lo compró
+    // desde aquí".
+    const extrasByRes = new Map<number, { lines: number; total: number }>()
+    if (resIds.length > 0) {
+      const extraRows = await db.execute(drizzleSql`
+        SELECT reservation_id AS "reservationId", COUNT(*)::int AS lines,
+               COALESCE(SUM(quantity * unit_price), 0)::float AS total
+        FROM reservation_sale_items
+        WHERE reservation_id IN ${resIds}
+          AND reservation_id IN (SELECT id FROM reservations WHERE property_id = ${getPropertyId()})
+        GROUP BY reservation_id
+      `) as unknown as { reservationId: number; lines: number; total: number }[]
+      for (const e of extraRows) extrasByRes.set(e.reservationId, { lines: e.lines, total: e.total })
+    }
+
+    // Peticiones de housekeeping (no molestar / solo toallas / limpieza
+    // normal) hechas desde la misma página — quedan como nota de texto en
+    // housekeeping_tasks (ver POST /api/room-access/housekeeping-request),
+    // así que se cuentan por coincidencia del texto que se guarda ahí.
+    const hkByRes = new Map<number, { dnd: number; towelsOnly: number; clean: number }>()
+    if (resIds.length > 0) {
+      const hkRows = await db.execute(drizzleSql`
+        SELECT res.id AS "reservationId", ht.notes
+        FROM reservations res
+        JOIN housekeeping_tasks ht
+          ON ht.room_id = ANY (
+               array_cat(
+                 ARRAY[res.room_id]::int[],
+                 COALESCE((SELECT array_agg(x::int) FROM jsonb_array_elements_text(COALESCE(res.extra_room_ids, '[]'::jsonb)) x), ARRAY[]::int[])
+               )
+             )
+         AND ht.date >= res.check_in_date::text AND ht.date < res.check_out_date::text
+        WHERE res.id IN ${resIds} AND res.property_id = ${getPropertyId()}
+          AND ht.notes ILIKE '%Petición del huésped%'
+      `) as unknown as { reservationId: number; notes: string }[]
+      for (const h of hkRows) {
+        const cur = hkByRes.get(h.reservationId) ?? { dnd: 0, towelsOnly: 0, clean: 0 }
+        cur.dnd        += (h.notes.match(/No molestar/g)       ?? []).length
+        cur.towelsOnly += (h.notes.match(/Solo toallas/g)      ?? []).length
+        cur.clean      += (h.notes.match(/Limpieza normal/g)   ?? []).length
+        hkByRes.set(h.reservationId, cur)
+      }
+    }
+
+    const byReservation = byReservationRaw.map(r => ({
+      reservationId: r.reservationId,
+      guestName:     [r.firstName, r.lastName].filter(Boolean).join(' ') || '—',
+      roomCodes:     r.roomCodes ?? '—',
+      visits:        r.visits,
+      firstVisit:    r.firstVisit,
+      lastVisit:     r.lastVisit,
+      extras:        extrasByRes.get(r.reservationId) ?? { lines: 0, total: 0 },
+      housekeeping:  hkByRes.get(r.reservationId) ?? { dnd: 0, towelsOnly: 0, clean: 0 },
+    }))
+
+    return c.json({
+      data: rows,
+      meta: { totalVisits, daysWithVisits, avgPerDay, busiestDay },
+      byHour, byRoom, byReservation,
+    })
   } catch (err) { return serverError(c, err) }
 })
 

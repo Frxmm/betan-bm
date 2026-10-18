@@ -110,15 +110,15 @@ export async function getBranding(): Promise<Branding> {
 //   whatsapp.templates, events.queries, ai.assistantName, secrets.* (ver abajo).
 // features: módulo → boolean. Módulos: ttlock, zkteco, ses, whatsapp, stripe,
 //   nobeds, fdm, jumbo, pool, competitors, events, pricingRules, ai, voice,
-//   bookingEngine, portal, laundry, cashDrawer.
+//   bookingEngine, portal, laundry, cashDrawer, liveMap.
 export type FeatureKey =
   | 'ttlock' | 'zkteco' | 'ses' | 'whatsapp' | 'stripe' | 'nobeds' | 'fdm' | 'jumbo'
   | 'pool' | 'competitors' | 'events' | 'pricingRules' | 'ai' | 'voice'
-  | 'bookingEngine' | 'portal' | 'laundry' | 'cashDrawer'
+  | 'bookingEngine' | 'portal' | 'laundry' | 'cashDrawer' | 'liveMap'
 
 export const ALL_FEATURES: FeatureKey[] = [
   'bookingEngine', 'portal', 'stripe', 'ses', 'ttlock', 'zkteco', 'whatsapp', 'nobeds',
-  'fdm', 'jumbo', 'pricingRules', 'competitors', 'events', 'pool', 'ai', 'voice', 'laundry', 'cashDrawer',
+  'fdm', 'jumbo', 'pricingRules', 'competitors', 'events', 'pool', 'ai', 'voice', 'laundry', 'cashDrawer', 'liveMap',
 ]
 
 /** Módulos que un tenant NUEVO tiene activados de serie. */

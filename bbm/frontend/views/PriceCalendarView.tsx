@@ -343,6 +343,7 @@ export default function PriceCalendarView() {
   const [showRatePanel,    setShowRatePanel]    = useState(false)
   const [showTypePanel,    setShowTypePanel]    = useState(false)
   const [fdmPushing,       setFdmPushing]       = useState(false)
+  const [showBulkOp,       setShowBulkOp]       = useState(false)
 
   // Click-to-toggle selection
   const selCellsRef  = useRef<Map<string, { roomTypeId: number | null; rateId: number; date: string }>>(new Map())
@@ -832,6 +833,12 @@ export default function PriceCalendarView() {
         <button className="btn btn-ghost btn-sm" onClick={() => { setShowRatePanel(v => !v); setShowTypePanel(false) }}>
           Tarifas{selRateIds ? ` (${selRateIds.length})` : ''} ▾
         </button>
+        {isAdmin && <>
+          <div className="pcal-toolbar-sep" />
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowBulkOp(true)}>
+            Op. Masiva
+          </button>
+        </>}
         {canFdm && <>
           <div className="pcal-toolbar-sep" />
           <button className="btn btn-ghost btn-sm" onClick={pushPrices} disabled={fdmPushing}
@@ -950,7 +957,181 @@ export default function PriceCalendarView() {
           </div>
         </div>
       )}
+      {showBulkOp && (
+        <BulkOpModal
+          allRates={dataRef.current?.allRates ?? []}
+          onClose={() => setShowBulkOp(false)}
+          onDone={() => { setShowBulkOp(false); refetchKeepingScroll() }}
+        />
+      )}
       </>}
+    </div>
+  )
+}
+
+// ── Modal de Operación Masiva ─────────────────────────────────────────────────
+
+function BulkOpModal({ allRates, onClose, onDone }: {
+  allRates: any[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [opType,     setOpType]     = useState<'close' | 'increase'>('close')
+  const [rateId,     setRateId]     = useState<number | ''>('')
+  const [dateFrom,   setDateFrom]   = useState('')
+  const [dateTo,     setDateTo]     = useState('')
+  const [amtType,    setAmtType]    = useState<'pct' | 'fixed'>('pct')
+  const [amount,     setAmount]     = useState('')
+  const [saving,     setSaving]     = useState(false)
+  const [info,       setInfo]       = useState<string | null>(null)
+
+  const baseRates = allRates.filter(r => !r.baseRateId)
+  const ratesForOp = opType === 'close' ? allRates : baseRates
+
+  const dayCount = (() => {
+    if (!dateFrom || !dateTo || dateFrom > dateTo) return 0
+    return dateRange(dateFrom, dateTo).length
+  })()
+
+  const submit = async () => {
+    if (rateId === '') { setInfo('Selecciona una tarifa'); return }
+    if (!dateFrom || !dateTo) { setInfo('Introduce las fechas'); return }
+    if (dateFrom > dateTo)    { setInfo('La fecha inicio debe ser anterior al fin'); return }
+    const dates = dateRange(dateFrom, dateTo)
+    if (dates.length === 0 || dates.length > 365) { setInfo('Rango no válido (máx. 365 días)'); return }
+    setSaving(true); setInfo(null)
+    try {
+      if (opType === 'close') {
+        await api.bulkDailyPrices(rateId as number, dates.map(d => ({ date: d, closed: true })))
+        toast(`${dates.length} días cerrados para ${allRates.find(r => r.id === rateId)?.title ?? ''}`)
+        onDone()
+      } else {
+        const amt = parseFloat(amount)
+        if (isNaN(amt) || amt <= 0) { setInfo('Introduce un importe válido'); setSaving(false); return }
+        const rate = allRates.find(r => r.id === rateId)
+        const calData: any = await api.ratesCalendar({ dateFrom, dateTo, rateIds: String(rateId) })
+        const pm: Record<string, Record<number, Record<string, { price: string; closed: boolean }>>> = calData.priceMap ?? {}
+        const globalMap: Record<string, { price: string; closed: boolean }> = pm['null']?.[rateId as number] ?? {}
+        const baseDefault = parseFloat(rate?.adjustValue ?? '0')
+        const entries = dates.map(d => {
+          const override = globalMap[d]
+          const cur = override ? parseFloat(override.price) : baseDefault
+          const next = amtType === 'pct'
+            ? Math.round(cur * (1 + amt / 100) * 100) / 100
+            : Math.round((cur + amt) * 100) / 100
+          return { date: d, price: Math.max(0, next) }
+        })
+        await api.bulkDailyPrices(rateId as number, entries)
+        toast(`Precios actualizados en ${dates.length} días para ${rate?.title ?? ''}`)
+        onDone()
+      }
+    } catch (e: any) { setInfo(e.message); setSaving(false) }
+  }
+
+  const inp: React.CSSProperties = {
+    padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border)',
+    background: 'var(--bg)', color: 'var(--text1)', fontSize: 13, outline: 'none', width: '100%',
+  }
+  const opBtn = (t: 'close' | 'increase', label: string) => (
+    <button type="button"
+      onClick={() => { setOpType(t); setRateId('') }}
+      style={{
+        flex: 1, padding: '8px 0', borderRadius: 8, border: '1px solid var(--border)',
+        cursor: 'pointer', fontSize: 13, fontWeight: 600,
+        background: opType === t ? 'var(--accent)' : 'var(--bg2)',
+        color: opType === t ? '#fff' : 'var(--text1)',
+      }}>
+      {label}
+    </button>
+  )
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 1100,
+      background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{
+        background: 'var(--bg1, var(--bg))', borderRadius: 12, padding: 28, width: 440,
+        boxShadow: '0 8px 32px rgba(0,0,0,.35)', display: 'flex', flexDirection: 'column', gap: 18,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Operación masiva</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text2)', lineHeight: 1 }}>✕</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          {opBtn('close',    'Cerrar tarifa')}
+          {opBtn('increase', 'Subir precio')}
+        </div>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13 }}>
+          <span style={{ fontWeight: 600 }}>
+            {opType === 'close' ? 'Tarifa a cerrar' : 'Tarifa base'}
+          </span>
+          <select style={inp} value={rateId} onChange={e => setRateId(Number(e.target.value) || '')}>
+            <option value="">— Selecciona —</option>
+            {ratesForOp.map((r: any) => (
+              <option key={r.id} value={r.id}>{r.title}{r.code ? ` (${r.code})` : ''}</option>
+            ))}
+          </select>
+        </label>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13 }}>
+            <span style={{ fontWeight: 600 }}>Desde</span>
+            <input type="date" style={inp} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13 }}>
+            <span style={{ fontWeight: 600 }}>Hasta</span>
+            <input type="date" style={inp} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </label>
+        </div>
+
+        {opType === 'increase' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>Incremento</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['pct', 'fixed'] as const).map(t => (
+                <button key={t} type="button"
+                  onClick={() => setAmtType(t)}
+                  style={{
+                    padding: '5px 16px', borderRadius: 6, border: '1px solid var(--border)',
+                    cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                    background: amtType === t ? 'var(--accent)' : 'var(--bg2)',
+                    color: amtType === t ? '#fff' : 'var(--text1)',
+                  }}>
+                  {t === 'pct' ? 'Porcentaje (%)' : 'Importe fijo (€)'}
+                </button>
+              ))}
+            </div>
+            <input type="number" style={inp} min="0" step={amtType === 'pct' ? '0.1' : '0.01'}
+              placeholder={amtType === 'pct' ? 'Ej: 10 (= +10%)' : 'Ej: 5.00 (= +5 €)'}
+              value={amount} onChange={e => setAmount(e.target.value)} />
+          </div>
+        )}
+
+        {dayCount > 0 && (
+          <p style={{ margin: 0, fontSize: 12, color: 'var(--text2)' }}>
+            {opType === 'close'
+              ? `Se cerrarán ${dayCount} día${dayCount !== 1 ? 's' : ''} para esta tarifa.`
+              : `Se actualizará el precio de ${dayCount} día${dayCount !== 1 ? 's' : ''}.`}
+          </p>
+        )}
+
+        {info && (
+          <p style={{ margin: 0, fontSize: 12, color: 'var(--red, #ef4444)', fontWeight: 500 }}>{info}</p>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button
+            className={`btn ${opType === 'close' ? 'btn-danger' : 'btn-primary'}`}
+            onClick={submit} disabled={saving || !rateId || !dateFrom || !dateTo}>
+            {saving ? 'Aplicando…' : opType === 'close' ? 'Cerrar tarifa' : 'Aplicar subida'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

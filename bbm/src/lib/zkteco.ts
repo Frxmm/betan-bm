@@ -23,6 +23,22 @@ export async function revokeCard(userId: string): Promise<void> {
   await bridgeFetch(`/api/cards/${userId}`, { method: 'DELETE' })
 }
 
+export async function enrollCardToDevice(opts: {
+  userId: string; name: string; cardNumber: string; note?: string; reservationId?: string
+}): Promise<void> {
+  await bridgeFetch('/api/cards', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id:        opts.userId,
+      name:           opts.name,
+      card_number:    opts.cardNumber,
+      note:           opts.note ?? '',
+      reservation_id: opts.reservationId ?? '',
+    }),
+  })
+}
+
 export async function getStatus()                         { return bridgeFetch('/api/status') }
 export async function openDoor(door: number)              { return bridgeFetch(`/api/doors/${door}/open`, { method: 'POST' }) }
 export async function getCards()                          { return bridgeFetch('/api/cards') }

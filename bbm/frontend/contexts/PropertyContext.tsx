@@ -27,6 +27,8 @@ export interface Property {
   fullAddress?: string
   timezone?: string
   currencyCode?: string
+  /** Aviso diario de recepción (settings ui.dailyReminder). */
+  dailyReminder?: { enabled?: boolean; title?: string; body?: string } | null
   /** Módulos contratados (módulo → activo). */
   features: Record<string, boolean>
   /** Sesión de soporte: un administrador de plataforma "entró como" este tenant. */

@@ -297,6 +297,16 @@ export default function PlanningView() {
     const newCheckIn  = addDays(dropDate, -dragging.grabOffset)
     const newCheckOut = addDays(newCheckIn, duration)
 
+    // Mover de habitación el mismo día sigue permitido para recepción —
+    // cambiar las fechas de la reserva arrastrándola solo lo puede hacer
+    // admin/dirección (el resto debe editarlo desde la reserva, donde queda
+    // trazado el motivo del cambio).
+    if (newCheckIn !== dragging.res.checkInDate && !canManage(user)) {
+      toast('Solo admin/dirección puede mover una reserva a otro día', 'err')
+      setDragging(null); setDragTarget(null)
+      return
+    }
+
     const hasBlock = blockedBeds.some(b => b.roomId === roomId && b.blockDate >= newCheckIn && b.blockDate < newCheckOut)
     if (hasBlock) {
       toast('No se puede mover: hay días bloqueados en esa habitación para ese período', 'err')

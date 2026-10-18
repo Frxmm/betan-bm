@@ -136,13 +136,28 @@ function RoomExtendSection({ t, rf, fullyPaid }: { t: T; rf: (path: string, opts
 
 type ExtraItem = { id: number; title: string; description: string | null; icon: string | null; pricingType: string; maxQuantity: number; defaultPrice: string | null }
 
-function extraUnitPrice(item: ExtraItem, nights: number, people: number): number {
-  const base = parseFloat(item.defaultPrice ?? '0')
+// Noches entre hoy (hora de Madrid) y el checkout, sin contar las que ya han
+// pasado — si todavía no ha hecho check-in, es sencillamente el total de la
+// estancia (no tiene sentido restar noches futuras a una compra anticipada).
+function remainingNightsFrom(checkInDate: string, checkOutDate: string): number {
+  const todayMadrid = new Intl.DateTimeFormat('en-CA', { timeZone: branding.timezone || undefined }).format(new Date())
+  const start = todayMadrid > checkInDate ? todayMadrid : checkInDate
+  return Math.max(0, Math.round((new Date(checkOutDate + 'T12:00:00').getTime() - new Date(start + 'T12:00:00').getTime()) / 86400000))
+}
+
+// unit = precio de UNA unidad (una noche, una persona, o ambos — según
+// pricingType), NUNCA el total ya multiplicado — eso se calcula aparte para
+// no confundir "8€/noche" con "56€/noche" (ver RoomExtrasSection).
+function extraUnitPrice(item: ExtraItem): number {
+  return parseFloat(item.defaultPrice ?? '0')
+}
+
+function extraMultiplier(item: ExtraItem, nights: number, people: number): number {
   switch (item.pricingType) {
-    case 'per_night':        return base * nights
-    case 'per_person':       return base * people
-    case 'per_person_night': return base * people * nights
-    default:                 return base
+    case 'per_night':        return nights
+    case 'per_person':       return people
+    case 'per_person_night': return people * nights
+    default:                 return 1
   }
 }
 
@@ -163,7 +178,7 @@ function RoomExtrasSection({ t, rf, nights, people }: { t: T; rf: (path: string,
 
   const total = extras.reduce((s, e) => {
     const q = qtys[e.id] ?? 0
-    return s + (q > 0 ? extraUnitPrice(e, nights, people) * q : 0)
+    return s + (q > 0 ? extraUnitPrice(e) * extraMultiplier(e, nights, people) * q : 0)
   }, 0)
 
   const pay = async () => {
@@ -181,8 +196,10 @@ function RoomExtrasSection({ t, rf, nights, people }: { t: T; rf: (path: string,
       <div className="pub-card-title">{t('extras.title')}</div>
       {error && <div className="alert alert-error" style={{ marginBottom: 10 }}>{error}</div>}
       {extras.map(e => {
-        const q    = qtys[e.id] ?? 0
-        const unit = extraUnitPrice(e, nights, people)
+        const q          = qtys[e.id] ?? 0
+        const unit       = extraUnitPrice(e)
+        const multiplier = extraMultiplier(e, nights, people)
+        const lineTotal  = unit * multiplier
         return (
           <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
             {e.icon && <span style={{ fontSize: 20, width: 26, textAlign: 'center' }}>{e.icon}</span>}
@@ -195,6 +212,16 @@ function RoomExtrasSection({ t, rf, nights, people }: { t: T; rf: (path: string,
                 {e.pricingType === 'per_person' && t('common.perPerson')}
                 {e.pricingType === 'per_person_night' && t('common.perPersonNight')}
               </div>
+              {e.pricingType === 'per_night' && multiplier > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--text2)' }}>
+                  {t('extras.nightsBreakdown', { count: multiplier, total: fmtMoney(lineTotal) })}
+                </div>
+              )}
+              {e.pricingType === 'per_person_night' && multiplier > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--text2)' }}>
+                  {t('extras.personNightsBreakdown', { people, count: nights, total: fmtMoney(lineTotal) })}
+                </div>
+              )}
             </div>
             {e.maxQuantity > 1 ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -363,6 +390,7 @@ function RoomStay({ t, session, onExpired }: { t: T; session: string; onExpired:
   if (!data)   return null
 
   const nights  = Math.round((new Date(data.checkOutDate + 'T12:00:00').getTime() - new Date(data.checkInDate + 'T12:00:00').getTime()) / 86400000)
+  const remainingNights = remainingNightsFrom(data.checkInDate, data.checkOutDate)
   const pending = parseFloat(data.total) - parseFloat(data.amountPaid ?? '0')
   const hasExtraRooms = ((data.extraRoomIds ?? []) as number[]).length > 0
   const active  = !['cancelled', 'no_show', 'checked_out'].includes(data.status)
@@ -390,7 +418,7 @@ function RoomStay({ t, session, onExpired }: { t: T; session: string; onExpired:
 
       {active && <HousekeepingSection t={t} rf={rf} />}
       {active && !hasExtraRooms && <RoomExtendSection t={t} rf={rf} fullyPaid={pending <= 0.01} />}
-      {active && <RoomExtrasSection t={t} rf={rf} nights={nights} people={data.people} />}
+      {active && <RoomExtrasSection t={t} rf={rf} nights={remainingNights} people={data.people} />}
       {!['cancelled', 'no_show'].includes(data.status) && <RoomFeedbackSection t={t} rf={rf} />}
     </>
   )

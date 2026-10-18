@@ -260,4 +260,25 @@ app.post('/adjustments', zValidator('json', z.object({ userId: z.number().int(),
   }
 })
 
+// GET /api/engagement/shift-reports?userId= — resúmenes de fin de turno
+// (src/lib/shiftEndReport.ts). Sin userId: los del propio usuario. Con
+// userId: solo dirección, para ver los de cualquier empleado en Implicación.
+app.get('/shift-reports', zValidator('query', z.object({ userId: z.coerce.number().int().optional(), limit: z.coerce.number().int().min(1).max(100).optional() })), async (c) => {
+  try {
+    const { userId: targetParam, limit } = c.req.valid('query')
+    const uid = userId(c)
+    if (!uid) return c.json({ data: [] })
+    const target = targetParam ?? uid
+    if (target !== uid && !isAdmin(c)) return c.json({ error: 'Sin permisos' }, 403)
+    const rows = await db.execute(sql`
+      SELECT id, user_id, shift_date, shift_start, shift_end, total_points, breakdown, created_at
+      FROM shift_end_reports
+      WHERE property_id = ${getPropertyId()} AND user_id = ${target}
+      ORDER BY shift_start DESC
+      LIMIT ${limit ?? 20}
+    `) as unknown as any[]
+    return c.json({ data: rows })
+  } catch (err) { return serverError(c, err) }
+})
+
 export default app

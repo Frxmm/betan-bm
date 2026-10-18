@@ -53,6 +53,7 @@ function loadPendingBooking(): PendingBooking | null {
 type RateOption  = { rateId: number; rateTitle: string; rateDescription?: string | null; pricePerNight: number; totalPrice: number; nights: number; minStay?: number; maxStay?: number }
 type RoomResult  = { roomTypeId: number; name: string; description: string; maxOccupancy: number; maxOccupancyBookingEngine: number | null; available: number; rates: RateOption[] }
 type ExtraItem   = { id: number; title: string; description: string | null; icon: string | null; pricingType: string; maxQuantity: number; defaultPrice: string | null }
+type CartLine    = { roomTypeId: number; rateId: number; quantity: number; roomName: string; rateName: string; maxOccupancy: number; pricePerNight: number; totalPrice: number }
 
 function extraUnitPrice(item: ExtraItem, nights: number, guests: number): number {
   const base = parseFloat(item.defaultPrice ?? '0')
@@ -363,10 +364,8 @@ const css = `
 type Phase = 'form' | 'results' | 'guest' | 'success' | 'resume'
 
 type BookingCtx = {
-  roomTypeId: number; rateId: number
-  checkIn: string; checkOut: string; guests: number
-  roomName: string; rateName: string; totalPrice: number; nights: number
-  maxOccupancy: number
+  checkIn: string; checkOut: string; guests: number; nights: number
+  cart: CartLine[]; totalPrice: number
 }
 
 function offerMsg(t: (k: string) => string, nights: number): string | null {
@@ -459,16 +458,11 @@ export default function BookingWidget() {
         lang={lang}
         onSearch={() => setPhase('results')}
         resetTrigger={resetTrigger}
-        onBook={(rooms, rate, checkIn, checkOut, guests) => {
+        onBook={(checkIn, checkOut, guests, cart) => {
+          const nights = Math.round((new Date(checkOut + 'T12:00:00').getTime() - new Date(checkIn + 'T12:00:00').getTime()) / 86400000)
           setCtx({
-            roomTypeId: rooms.roomTypeId,
-            rateId:     rate.rateId,
-            checkIn, checkOut, guests,
-            roomName:   rooms.name,
-            rateName:   rate.rateTitle,
-            totalPrice: rate.totalPrice,
-            nights:     rate.nights,
-            maxOccupancy: rooms.maxOccupancy,
+            checkIn, checkOut, guests, nights, cart,
+            totalPrice: cart.reduce((s, l) => s + l.totalPrice * l.quantity, 0),
           })
           setPhase('guest')
         }}
@@ -497,7 +491,7 @@ export default function BookingWidget() {
 function SearchForm({ lang, onSearch, onBook, phase, onResetPhase, resetTrigger }: {
   lang:         import('./i18n').Lang
   onSearch:     () => void
-  onBook:       (room: RoomResult, rate: RateOption, ci: string, co: string, g: number) => void
+  onBook:       (checkIn: string, checkOut: string, guests: number, cart: CartLine[]) => void
   phase:        Phase
   onResetPhase: () => void
   resetTrigger: number
@@ -525,7 +519,7 @@ function SearchForm({ lang, onSearch, onBook, phase, onResetPhase, resetTrigger 
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const [results,  setResults]  = useState<RoomResult[] | null>(null)
-  const [selected, setSelected] = useState<{ roomTypeId: number; rateId: number } | null>(null)
+  const [cart,     setCart]     = useState<CartLine[]>([])
 
   // Si viene con query params, busca automáticamente al montar
   useEffect(() => {
@@ -537,13 +531,13 @@ function SearchForm({ lang, onSearch, onBook, phase, onResetPhase, resetTrigger 
   useEffect(() => {
     if (resetTrigger === 0) return
     setResults(null)
-    setSelected(null)
+    setCart([])
     setError('')
   }, [resetTrigger])
 
   const search = async (ci = checkIn, co = checkOut, g = guests) => {
     if (!ci || !co || co <= ci) { setError(t('booking.dateError')); return }
-    setLoading(true); setError(''); setResults(null); setSelected(null)
+    setLoading(true); setError(''); setResults(null); setCart([])
     onSearch()  // Abre el modal inmediatamente al pulsar Buscar, sin esperar resultados
     try {
       const res  = await pfetch(`${API}/availability?checkIn=${ci}&checkOut=${co}&guests=${g}`)
@@ -554,11 +548,32 @@ function SearchForm({ lang, onSearch, onBook, phase, onResetPhase, resetTrigger 
     finally { setLoading(false) }
   }
 
+  // Cuántas unidades de ESTE tipo de habitación hay ya en el carrito (en
+  // cualquier tarifa) — el tope de cada tarifa es compartido, porque
+  // `available` cuenta habitaciones físicas, no combinaciones de tarifa.
+  const typeQtyInCart = (roomTypeId: number) =>
+    cart.filter(l => l.roomTypeId === roomTypeId).reduce((s, l) => s + l.quantity, 0)
+
+  const setLineQty = (room: RoomResult, rate: RateOption, qty: number) => {
+    const thisLineQty  = cart.find(l => l.roomTypeId === room.roomTypeId && l.rateId === rate.rateId)?.quantity ?? 0
+    const otherTypeQty = typeQtyInCart(room.roomTypeId) - thisLineQty
+    const capped = Math.max(0, Math.min(qty, room.available - otherTypeQty))
+    setCart(prev => {
+      const rest = prev.filter(l => !(l.roomTypeId === room.roomTypeId && l.rateId === rate.rateId))
+      if (capped === 0) return rest
+      return [...rest, {
+        roomTypeId: room.roomTypeId, rateId: rate.rateId, quantity: capped,
+        roomName: room.name, rateName: rate.rateTitle, maxOccupancy: room.maxOccupancy,
+        pricePerNight: rate.pricePerNight, totalPrice: rate.totalPrice,
+      }]
+    })
+  }
+
+  const cartTotal = cart.reduce((s, l) => s + l.totalPrice * l.quantity, 0)
+
   const handleContinue = () => {
-    if (!selected || !results) return
-    const room = results.find(r => r.roomTypeId === selected.roomTypeId)!
-    const rate = room.rates.find(r => r.rateId === selected.rateId)!
-    onBook(room, rate, checkIn ?? '', checkOut ?? '', guests)
+    if (cart.length === 0) return
+    onBook(checkIn ?? '', checkOut ?? '', guests, cart)
   }
 
   return (
@@ -568,14 +583,14 @@ function SearchForm({ lang, onSearch, onBook, phase, onResetPhase, resetTrigger 
           <div className="w-field">
             <label className="w-label">📅 {t('booking.arrival')}</label>
             <input type="date" className="w-input" value={checkIn} min={todayStr}
-              onChange={e => { setCheckIn(e.target.value); setResults(null); onResetPhase() }}
+              onChange={e => { setCheckIn(e.target.value); setResults(null); setCart([]); onResetPhase() }}
               onClick={e => { try { (e.target as any).showPicker() } catch {} }} />
           </div>
           <div className="w-field">
             <label className="w-label">📅 {t('booking.departure')}</label>
             <input type="date" className="w-input" value={checkOut} min={checkIn || todayStr}
               disabled={!checkIn}
-              onChange={e => { setCheckOut(e.target.value); setResults(null); onResetPhase() }}
+              onChange={e => { setCheckOut(e.target.value); setResults(null); setCart([]); onResetPhase() }}
               onClick={e => { try { (e.target as any).showPicker() } catch {} }} />
           </div>
           <div className="w-field">
@@ -630,17 +645,14 @@ function SearchForm({ lang, onSearch, onBook, phase, onResetPhase, resetTrigger 
                     </span>
                   </div>
                   <button className="w-btn w-btn-ghost" style={{ fontSize: 12, padding: '5px 10px' }}
-                    onClick={() => { setResults(null); setSelected(null); onResetPhase() }}>
+                    onClick={() => { setResults(null); setCart([]); onResetPhase() }}>
                     {t('common.back')}
                   </button>
                 </div>
 
                 <div className="w-room-list">
                   {results.map(room => (
-                    <div key={room.roomTypeId}
-                      className={`w-room-card ${selected?.roomTypeId === room.roomTypeId ? 'selected' : ''}`}
-                      onClick={() => setSelected({ roomTypeId: room.roomTypeId, rateId: room.rates[0]!.rateId })}
-                    >
+                    <div key={room.roomTypeId} className="w-room-card" style={{ cursor: 'default' }}>
                       <div className="w-room-hdr">
                         <div>
                           <div className="w-room-name">{room.name}</div>
@@ -651,38 +663,55 @@ function SearchForm({ lang, onSearch, onBook, phase, onResetPhase, resetTrigger 
                             })}
                           </div>
                         </div>
-                        <div>
-                          <div className="w-room-price-main">{fmtMoney(room.rates[0]!.totalPrice)}</div>
-                          <div className="w-room-price-night">{fmtMoney(room.rates[0]!.pricePerNight)}{t('common.perNight')}</div>
-                        </div>
                       </div>
 
-                      {room.rates.length > 1 && selected?.roomTypeId === room.roomTypeId && (
-                        <div className="w-rate-list">
-                          <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 2 }}>{t('booking.selectRate')}</div>
-                          {room.rates.map(rate => (
-                            <div key={rate.rateId}
-                              className={`w-rate-opt ${selected.rateId === rate.rateId ? 'selected' : ''}`}
-                              onClick={e => { e.stopPropagation(); setSelected({ roomTypeId: room.roomTypeId, rateId: rate.rateId }) }}
-                            >
+                      <div className="w-rate-list">
+                        {room.rates.map(rate => {
+                          const lineQty      = cart.find(l => l.roomTypeId === room.roomTypeId && l.rateId === rate.rateId)?.quantity ?? 0
+                          const otherTypeQty = typeQtyInCart(room.roomTypeId) - lineQty
+                          const maxForLine   = Math.max(0, room.available - otherTypeQty)
+                          return (
+                            <div key={rate.rateId} className={`w-rate-opt ${lineQty > 0 ? 'selected' : ''}`} style={{ cursor: 'default' }}>
                               <span className="w-rate-name" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
                                 <span style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                                   {rate.rateTitle}
                                   {rate.minStay && rate.minStay > 1 && <span className="w-rate-tag">{t('booking.minStayTag', { n: rate.minStay })}</span>}
                                 </span>
                                 {rate.rateDescription && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text2)' }}>{rate.rateDescription}</span>}
+                                <span style={{ fontSize: 11, color: 'var(--text2)' }}>{fmtMoney(rate.pricePerNight)}{t('common.perNight')}</span>
                               </span>
-                              <span className="w-rate-price">{fmtMoney(rate.totalPrice)}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span className="w-rate-price">{fmtMoney(rate.totalPrice)}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <button type="button" onClick={() => setLineQty(room, rate, lineQty - 1)} disabled={lineQty === 0}
+                                    style={{ width: 22, height: 22, borderRadius: 5, border: '1px solid var(--border2)', background: '#fff', cursor: 'pointer', fontSize: 13 }}>−</button>
+                                  <span style={{ minWidth: 14, textAlign: 'center', fontWeight: 700, fontSize: 12 }}>{lineQty}</span>
+                                  <button type="button" onClick={() => setLineQty(room, rate, lineQty + 1)} disabled={lineQty >= maxForLine}
+                                    style={{ width: 22, height: 22, borderRadius: 5, border: '1px solid var(--border2)', background: '#fff', cursor: 'pointer', fontSize: 13 }}>+</button>
+                                </div>
+                              </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          )
+                        })}
+                      </div>
                     </div>
                   ))}
                 </div>
 
-                {selected && (
-                  <button className="w-btn w-btn-primary w-btn-full w-btn-lg" style={{ marginTop: 16 }}
+                {cart.length > 0 && (
+                  <div className="w-summary-box" style={{ marginTop: 16 }}>
+                    {cart.map(l => (
+                      <div key={`${l.roomTypeId}-${l.rateId}`} className="w-summary-row">
+                        <span>{l.quantity}× {l.roomName} ({l.rateName})</span>
+                        <span>{fmtMoney(l.totalPrice * l.quantity)}</span>
+                      </div>
+                    ))}
+                    <div className="w-summary-row total"><span>{t('common.total')}</span><span>{fmtMoney(cartTotal)}</span></div>
+                  </div>
+                )}
+
+                {cart.length > 0 && (
+                  <button className="w-btn w-btn-primary w-btn-full w-btn-lg" style={{ marginTop: 10 }}
                     onClick={handleContinue}>
                     {t('booking.continue')}
                   </button>
@@ -808,9 +837,10 @@ function GuestPhase({ lang, ctx, onBack, onPay }: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           checkIn: ctx.checkIn, checkOut: ctx.checkOut,
-          roomTypeId: ctx.roomTypeId, rateId: ctx.rateId, guests: ctx.guests,
+          rooms: ctx.cart.map(l => ({ roomTypeId: l.roomTypeId, rateId: l.rateId, quantity: l.quantity })),
+          guests: ctx.guests,
           firstName, lastName, email, phone: phone || undefined, notes: notes || undefined,
-          bedPreferenceTwin: ctx.maxOccupancy === 2 ? bedPreferenceTwin : undefined,
+          bedPreferenceTwin: ctx.cart.some(l => l.maxOccupancy === 2) ? bedPreferenceTwin : undefined,
           extras: selectedExtras.length ? selectedExtras : undefined,
           discountToken: discountActive ? discountInfo!.token : undefined,
           source: 'widget',
@@ -835,7 +865,11 @@ function GuestPhase({ lang, ctx, onBack, onPay }: {
       </div>
 
       <div className="w-summary-box">
-        <div className="w-summary-row"><span>{ctx.roomName}</span><span>{ctx.rateName}</span></div>
+        {ctx.cart.map(l => (
+          <div key={`${l.roomTypeId}-${l.rateId}`} className="w-summary-row">
+            <span>{l.quantity}× {l.roomName} ({l.rateName})</span><span>{fmtMoney(l.totalPrice * l.quantity)}</span>
+          </div>
+        ))}
         <div className="w-summary-row">
           <span>{fmtDate(ctx.checkIn)} → {fmtDate(ctx.checkOut)}</span>
           <span>{ctx.nights} {plural(lang, ctx.nights, t('common.nightOne'), t('common.nightOther'))}</span>
@@ -918,7 +952,7 @@ function GuestPhase({ lang, ctx, onBack, onPay }: {
           <label>{t('booking.phone')}</label>
           <input className="w-finput" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+34 600 000 000" />
         </div>
-        {ctx.maxOccupancy === 2 && (
+        {ctx.cart.some(l => l.maxOccupancy === 2) && (
           <div className="w-fgroup w-form-full">
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <input type="checkbox" checked={bedPreferenceTwin} onChange={e => setBedPreferenceTwin(e.target.checked)} style={{ width: 17, height: 17 }} />

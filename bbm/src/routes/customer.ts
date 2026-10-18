@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../db'
-import { reservations, guests, saleItems, feedbackThreads } from '../db/schema'
+import { reservations, guests, saleItems, feedbackThreads, rooms } from '../db/schema'
 import { eq, and, desc, inArray } from 'drizzle-orm'
 import { getPropertyId, getBranding, runWithProperty } from '../lib/property'
 import { getStripeCurrency, publicUrl } from '../lib/stripe'
@@ -31,6 +31,18 @@ const ownRes = (id: number, guestId: number) =>
 const app = new Hono()
 
 const BOOKING_ALIAS = /@guest\.booking\.com$/i
+
+// Códigos de las habitaciones adicionales (extraRoomIds) de un conjunto de
+// reservas — no existe relación de Drizzle para esto (jsonb, no FK), así que
+// se resuelve con una consulta aparte, igual que ya hace el listado de
+// reservas del panel (src/routes/reservations.ts). El huésped solo veía la
+// habitación principal hasta ahora, nunca cuántas más tenía.
+async function resolveExtraRoomCodes(resList: { extraRoomIds?: unknown }[]): Promise<Map<number, string>> {
+  const ids = [...new Set(resList.flatMap(r => ((r.extraRoomIds ?? []) as number[])))]
+  if (ids.length === 0) return new Map()
+  const rows = await db.select({ id: rooms.id, code: rooms.code }).from(rooms).where(and(inArray(rooms.id, ids), eq(rooms.propertyId, getPropertyId())))
+  return new Map(rows.map(r => [r.id, r.code]))
+}
 
 // ─── Middleware: customer JWT ──────────────────────────────────────────────────
 
@@ -112,7 +124,13 @@ app.get('/reservations', async (c) => {
       orderBy: desc(reservations.checkInDate),
     })
 
-    return c.json({ data: list })
+    const codeById = await resolveExtraRoomCodes(list)
+    const data = list.map(r => ({
+      ...r,
+      extraRoomCodes: ((r.extraRoomIds ?? []) as number[]).map(id => codeById.get(id) ?? `#${id}`),
+    }))
+
+    return c.json({ data })
   } catch (err) { return serverError(c, err) }
 })
 
@@ -132,7 +150,11 @@ app.get('/reservations/:id', async (c) => {
     })
 
     if (!res) return c.json({ error: 'No encontrado' }, 404)
-    return c.json({ data: res })
+
+    const codeById = await resolveExtraRoomCodes([res])
+    const extraRoomCodes = ((res.extraRoomIds ?? []) as number[]).map(id => codeById.get(id) ?? `#${id}`)
+
+    return c.json({ data: { ...res, extraRoomCodes } })
   } catch (err) { return serverError(c, err) }
 })
 
@@ -373,7 +395,13 @@ app.post('/reservations/:id/extras', zValidator('json', z.object({
       inArray(saleItems.id, extraIds),
     ))
 
-    const nights = res.nights as number
+    // Noches que quedan por cobrar (de hoy al checkout), no las de la estancia
+    // completa — si compra el desayuno en el día 3 de 7, solo paga lo que
+    // queda, no los días que ya pasaron. Si todavía no ha hecho check-in, es
+    // sencillamente el total de la estancia.
+    const todayMadrid = new Intl.DateTimeFormat('en-CA', { timeZone: (await getBranding()).timezone }).format(new Date())
+    const start  = todayMadrid > res.checkInDate ? todayMadrid : res.checkInDate
+    const nights = Math.max(0, Math.round((new Date(res.checkOutDate + 'T12:00:00').getTime() - new Date(start + 'T12:00:00').getTime()) / 86400000))
     const people = res.people as number
 
     let extrasTotal = 0

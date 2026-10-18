@@ -9,6 +9,7 @@ import { sendLockCode } from '../lib/email'
 import { sendWhatsappTemplate } from '../lib/whatsapp'
 import { channelEnabled } from '../lib/messaging'
 import { realPaidByReservation, pendingBalance as calcPendingBalance } from '../lib/paymentAggregate'
+import { propertyMs, zonedMs } from '../lib/dates'
 
 const app = new Hono()
 
@@ -30,23 +31,8 @@ async function isBalanceCheckExempt(bookingChannelId: number | null | undefined)
   return (prop?.ttlockBalanceExemptChannelIds ?? []).includes(bookingChannelId)
 }
 
-// Timestamp de una fecha+hora en la ZONA HORARIA DEL HOTEL (properties.timezone),
-// independientemente de la zona del servidor (AWS va en UTC).
-export function localMs(dateStr: string, hour: number, tz: string): number {
-  const utcGuess = new Date(`${dateStr}T${String(hour).padStart(2, '0')}:00:00Z`).getTime()
-  // offset del hotel en esa fecha (según horario de verano)
-  const offsetName = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longOffset' })
-    .formatToParts(new Date(utcGuess)).find(p => p.type === 'timeZoneName')?.value ?? 'GMT'
-  const m = offsetName.match(/GMT(?:([+-])(\d{2}):(\d{2}))?/)
-  const sign = m?.[1] === '-' ? -1 : 1
-  const offsetMin = m?.[2] ? sign * (parseInt(m[2]) * 60 + parseInt(m[3]!)) : 0
-  return utcGuess - offsetMin * 60_000
-}
-
-// Igual que localMs pero con la zona del tenant del contexto
-export async function propertyMs(dateStr: string, hour: number): Promise<number> {
-  return localMs(dateStr, hour, (await getBranding()).timezone)
-}
+// Conversión fecha+hora local del tenant → timestamp (ver lib/dates.ts)
+export { zonedMs as localMs, propertyMs }
 
 // ── Helpers para almacenamiento multi-habitación ───────────────────────────────
 // ttlockCode puede ser:
@@ -104,28 +90,43 @@ export function storeCards(entries: CardEntry[]): string | null {
 // anteriores (por cardId, guardado la vez anterior) para no duplicar entradas.
 // No-op silencioso si la reserva no tiene tarjeta enrolada.
 export async function reenrollCard(
-  res: { id: number; zktecoCardBe: string | null; ttlockCardIds: string | null; guest?: { firstName?: string | null; lastName?: string | null } | null },
+  res: {
+    id: number
+    zktecoCardBe: string | null
+    ttlockCardIds: string | null
+    zktecoExtraCards?: Array<{ cardBe: string; [k: string]: unknown }> | null
+    guest?: { firstName?: string | null; lastName?: string | null } | null
+  },
   lockRooms: Array<{ code: string; ttlockId: string }>,
   startMs: number,
   endMs: number,
 ): Promise<{ attempted: boolean; ok: boolean; error?: string }> {
-  if (!res.zktecoCardBe || !lockRooms.length) return { attempted: false, ok: true }
+  // Todas las tarjetas físicas a re-enrolar: primary + extras
+  const allCardBes = [
+    ...(res.zktecoCardBe ? [res.zktecoCardBe] : []),
+    ...((res.zktecoExtraCards ?? []).map(c => c.cardBe).filter(Boolean) as string[]),
+  ]
+  if (!allCardBes.length || !lockRooms.length) return { attempted: false, ok: true }
 
+  // Borrar TODAS las credenciales TTLock anteriores (de todas las tarjetas)
   const oldEntries = parseStoredCards(res.ttlockCardIds)
   await Promise.allSettled(oldEntries.map(e => deleteCard(e.lockId, e.cardId).catch(() => {})))
 
   const guestName = res.guest ? `${res.guest.firstName ?? ''} ${res.guest.lastName ?? ''}`.trim() : ''
-  const cardName  = `Res#${res.id}${guestName ? ' - ' + guestName : ''}`
+  const baseCardName = `Res#${res.id}${guestName ? ' - ' + guestName : ''}`
 
   try {
-    const entries: CardEntry[] = await Promise.all(
-      lockRooms.map(async lr => {
-        const { cardId } = await enrollCard({ lockId: lr.ttlockId, cardNumberHex: res.zktecoCardBe!, cardName, startMs, endMs })
-        return { room: lr.code, lockId: lr.ttlockId, cardId }
-      })
-    )
+    const newEntries: CardEntry[] = []
+    for (let i = 0; i < allCardBes.length; i++) {
+      const cardNumberHex = allCardBes[i]!
+      const cardName = i === 0 ? baseCardName : `${baseCardName} +${i}`
+      for (const lr of lockRooms) {
+        const { cardId } = await enrollCard({ lockId: lr.ttlockId, cardNumberHex, cardName, startMs, endMs })
+        newEntries.push({ room: lr.code, lockId: lr.ttlockId, cardId })
+      }
+    }
     await db.update(reservations)
-      .set({ ttlockCardIds: storeCards(entries), updatedAt: new Date() })
+      .set({ ttlockCardIds: storeCards(newEntries), updatedAt: new Date() })
       .where(and(eq(reservations.id, res.id), eq(reservations.propertyId, getPropertyId())))
     return { attempted: true, ok: true }
   } catch (e: any) {
@@ -264,7 +265,7 @@ app.post('/reenroll-card/:id', async (c) => {
     if (endMs <= startMs) return c.json({ error: 'La reserva ya ha terminado — no se puede re-enrolar la tarjeta' }, 422)
 
     const result = await reenrollCard(
-      { id: res.id, zktecoCardBe: res.zktecoCardBe, ttlockCardIds: (res as any).ttlockCardIds, guest: res.guest },
+      { id: res.id, zktecoCardBe: res.zktecoCardBe, ttlockCardIds: (res as any).ttlockCardIds, zktecoExtraCards: (res as any).zktecoExtraCards ?? null, guest: res.guest },
       lockRooms, startMs, endMs,
     )
     return c.json({ data: result })

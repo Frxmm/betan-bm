@@ -16,6 +16,13 @@ const envSchema = z.object({
   // Token estático fijo (no JWT, no caduca): la app lo manda como Bearer en
   // POST /api/voice-brief. Si no está configurado, ese endpoint responde 503.
   VOICE_APP_TOKEN:        z.string().optional(),
+  // Proceso externo de Jumbo — crea/cancela
+  // reservas de Jumbo directo en nuestra BD. Solo fallback de un-solo-tenant
+  // (ALLOW_ENV_SECRET_FALLBACK=1); lo normal es el secreto por tenant.
+  // Token estático fijo (no JWT): lo manda como Bearer en
+  // POST/GET /api/jumbo-integration/... Si no está configurado, esos
+  // endpoints responden 401 siempre.
+  JUMBO_INTEGRATION_TOKEN: z.string().optional(),
   // Usuario (users.id) en cuyo nombre actúa el agente para esas preguntas —
   // le da permisos/roles reales y que createdBy no quede vacío en lo que
   // escriba. Si no se configura, actúa con rol 'direccion' sin usuario real

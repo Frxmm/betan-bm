@@ -1,14 +1,31 @@
 import type { Context, Next } from 'hono'
 import { verify } from 'hono/jwt'
 import { getCookie } from 'hono/cookie'
+import { eq } from 'drizzle-orm'
 import { env } from '../lib/env'
+import { db } from '../db'
+import { users } from '../db/schema'
 
 export async function requireAuth(c: Context, next: Next) {
   const token = getCookie(c, 'auth_token')
     ?? c.req.header('Authorization')?.replace('Bearer ', '')
   if (!token) return c.json({ error: 'No autenticado' }, 401)
   try {
-    const payload = await verify(token, env.JWT_SECRET, 'HS256')
+    const payload = await verify(token, env.JWT_SECRET, 'HS256') as any
+    // sessionVersion: si Dirección ha forzado el cierre de sesión de este
+    // usuario desde Usuarios (incrementa users.session_version), el token ya
+    // emitido deja de valer al instante aunque no haya caducado — los JWT no
+    // tienen estado propio, esta es la única forma de revocar uno ya emitido.
+    const uid = Number(payload?.sub)
+    if (!isNaN(uid) && uid > 0 && payload?.sv !== undefined) {
+      const row = await db.query.users.findFirst({
+        where: eq(users.id, uid),
+        columns: { sessionVersion: true, active: true },
+      })
+      if (!row || !row.active || row.sessionVersion !== payload.sv) {
+        return c.json({ error: 'Sesión cerrada' }, 401)
+      }
+    }
     c.set('jwtPayload', payload)
     await next()
   } catch {

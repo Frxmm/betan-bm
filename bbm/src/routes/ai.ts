@@ -404,7 +404,7 @@ TAREAS PROGRAMADAS (create_scheduled_task, list_scheduled_tasks, set_scheduled_t
 
 CARRITOS ABANDONADOS (get_abandoned_carts): devuelve la lista de reservas online tentative que se detectaron como abandonadas (sin pagar, >20 min de antigüedad). Cada carrito incluye: importe total, porcentaje de descuento ofrecido (10-25 % escalonado: 10 % <1000 €, 15 % >1000 €, 20 % >2000 €, 25 % >3500 €), si se envió el email/WhatsApp de recuperación (email_sent_at), y si el huésped acabó pagando (recovered=true). Usa este tool cuando el usuario pregunte sobre carritos abandonados, tasa de recuperación, efectividad del descuento o captación de leads online. Puedes filtrar por recovered=true/false para ver solo los recuperados o los pendientes.
 
-CONFIGURACIÓN DE ALERTAS (get_alert_configs / set_alert_enabled — solo dirección): get_alert_configs devuelve la lista completa de tipos de alerta con su estado (activado/desactivado). set_alert_enabled activa o desactiva un tipo. Úsalo cuando el usuario pregunte "qué alertas tengo configuradas", "desactiva la alerta de X", "activa Y". Tipos disponibles: breakfast-unconfirmed, breakfast-inventory-stale, stale-room-incident, blocked-room-no-incident, hk-unassigned, drawer-missing-first, drawer-missing-second, drawer-mismatch, drawer-deposits-mismatch, checkout-pending, unpaid-reservation, zero-total-reservation, stolen-items, checkin-abandoned, no-show-booking, new-extras-web-directa, unassigned-room, laundry-process-missing, bed-preference-mismatch, abandoned-cart-call, pricing-rule-applied, high-occupancy, feedback-complaint-open, pricing-engine-health, breakfast-service-low.
+CONFIGURACIÓN DE ALERTAS (get_alert_configs / set_alert_enabled — solo dirección): get_alert_configs devuelve la lista completa de tipos de alerta con su estado (activado/desactivado). set_alert_enabled activa o desactiva un tipo. Úsalo cuando el usuario pregunte "qué alertas tengo configuradas", "desactiva la alerta de X", "activa Y". Tipos disponibles: breakfast-unconfirmed, breakfast-inventory-stale, stale-room-incident, blocked-room-no-incident, hk-unassigned, drawer-missing-first, drawer-missing-second, drawer-mismatch, drawer-deposits-mismatch, checkout-pending, unpaid-reservation, extension-unpaid, zero-total-reservation, stolen-items, checkin-abandoned, no-show-booking, new-extras-web-directa, unassigned-room, laundry-process-missing, bed-preference-mismatch, abandoned-cart-call, pricing-rule-applied, high-occupancy, feedback-complaint-open, pricing-engine-health, breakfast-service-low.
 
 ${poolBlock}
 ${eventsBlock}
@@ -1533,6 +1533,48 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_employee_shifts',
+      description: 'SOLO para dirección: turnos planificados del personal (fecha, hora de inicio/fin, empleado), del sistema de mantenimiento/piscina (módulo de piscina/mantenimiento). No son turnos de caja — son los turnos de trabajo reales de cada empleado. Sin desde/hasta, usa por defecto de hace 7 días a 21 días vista (el histórico completo es demasiado grande) — pide un rango concreto si el usuario necesita otras fechas.',
+      parameters: {
+        type: 'object',
+        properties: {
+          desde: { type: 'string', description: 'Fecha inicio del rango, YYYY-MM-DD (opcional, por defecto hace 7 días)' },
+          hasta: { type: 'string', description: 'Fecha fin del rango, YYYY-MM-DD (opcional, por defecto 21 días vista)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_employee_vacations',
+      description: 'SOLO para dirección: solicitudes de vacaciones/ausencias del personal (fechas, estado: Pendiente/Aprobada/Rechazada), del sistema de mantenimiento/piscina (módulo de piscina/mantenimiento).',
+      parameters: {
+        type: 'object',
+        properties: {
+          estado: { type: 'string', enum: ['Pendiente', 'Aprobada', 'Rechazada'], description: 'Filtrar por estado (opcional, por defecto todas)' },
+          anio:   { type: 'number', description: 'Filtrar por año de inicio de la solicitud (opcional)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_shift_end_reports',
+      description: 'SOLO para dirección: resúmenes de desempeño de fin de turno de recepción (check-ins, check-outs, depósitos cobrados, alertas del turno, extras vendidos, puntos de implicación) — se generan solos ~15 min antes de que acabe cada turno.',
+      parameters: {
+        type: 'object',
+        properties: {
+          userId: { type: 'number', description: 'Filtrar por un empleado concreto (id de usuario); si se omite, los de todos' },
+          limit:  { type: 'number', description: 'Máximo de resúmenes a devolver, por defecto 20' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_pool_supplies_level',
       description: 'SOLO para dirección: nivel estimado y consumo diario de garrafas de gas o cloro de la piscina, del sistema de mantenimiento/piscina. Incluye días restantes estimados hasta agotarse.',
       parameters: {
@@ -1698,6 +1740,9 @@ const TOOL_FEATURE: Record<string, FeatureKey> = {
   get_pool_supplies_level:         'pool',
   get_pool_water_readings:         'pool',
   get_water_tank_status:           'pool',
+  get_employee_shifts:             'pool',
+  get_employee_vacations:          'pool',
+  get_shift_end_reports:           'pool',
   open_access_door:          'zkteco',
   get_laundry_status:        'laundry',
   get_abandoned_carts:       'bookingEngine',
@@ -3382,6 +3427,59 @@ async function executeTool(name: string, args: Record<string, any>, ctx: AiUserC
         if (status === 'resolved') return { items: (await poolControl.getResolvedIncidents()).items }
         const [pending, resolved] = await Promise.all([poolControl.getPendingIncidents(), poolControl.getResolvedIncidents()])
         return { items: [...pending.items, ...resolved.items] }
+      } catch (e: any) { return { error: e.message } }
+    }
+
+    case 'get_employee_shifts': {
+      if (!ctx.roles.includes('direccion')) return { error: 'Permiso denegado: solo para dirección.' }
+      if (!poolControl.isConfigured()) return { error: 'Integración con el sistema de mantenimiento/piscina no configurada (falta POOL_API_URL/POOL_API_KEY).' }
+      try {
+        // Sin fechas, esa API devuelve turnos de TODO el histórico/futuro
+        // planificado (hemos visto fechas de más de un año vista) — un
+        // volumen que revienta la respuesta del modelo. Si no se piden
+        // fechas concretas, se acota a una ventana razonable (una semana
+        // atrás, dos adelante) en vez de pedir todo.
+        const today = new Date().toISOString().slice(0, 10)
+        const desde = args.desde ?? new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+        const hasta = args.hasta ?? new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10)
+        const data: any = await poolControl.getShifts(desde, hasta)
+        const items = (data?.items ?? []) as any[]
+        const MAX_ITEMS = 300
+        return {
+          desde, hasta,
+          items: items.slice(0, MAX_ITEMS),
+          truncated: items.length > MAX_ITEMS ? `Se han omitido ${items.length - MAX_ITEMS} turnos — acota más el rango de fechas (desde/hasta) si necesitas verlos.` : undefined,
+        }
+      } catch (e: any) { return { error: e.message } }
+    }
+
+    case 'get_employee_vacations': {
+      if (!ctx.roles.includes('direccion')) return { error: 'Permiso denegado: solo para dirección.' }
+      if (!poolControl.isConfigured()) return { error: 'Integración con el sistema de mantenimiento/piscina no configurada (falta POOL_API_URL/POOL_API_KEY).' }
+      try {
+        const data: any = await poolControl.getVacations(undefined, args.estado, args.anio)
+        const items = (data?.items ?? []) as any[]
+        const MAX_ITEMS = 300
+        return {
+          items: items.slice(0, MAX_ITEMS),
+          truncated: items.length > MAX_ITEMS ? `Se han omitido ${items.length - MAX_ITEMS} solicitudes — acota por estado o año si necesitas verlas todas.` : undefined,
+        }
+      } catch (e: any) { return { error: e.message } }
+    }
+
+    case 'get_shift_end_reports': {
+      if (!ctx.roles.includes('direccion')) return { error: 'Permiso denegado: solo para dirección.' }
+      try {
+        const rows = await db.execute(drizzleSql`
+          SELECT ser.id, ser.user_id, u.first_name, u.last_name, ser.shift_date, ser.shift_start, ser.shift_end, ser.total_points, ser.breakdown
+          FROM shift_end_reports ser
+          JOIN users u ON u.id = ser.user_id AND u.property_id = ${getPropertyId()}
+          WHERE ser.property_id = ${getPropertyId()}
+          ${args.userId ? drizzleSql`AND ser.user_id = ${args.userId}` : drizzleSql``}
+          ORDER BY ser.shift_start DESC
+          LIMIT ${args.limit ?? 20}
+        `) as unknown as any[]
+        return { items: rows }
       } catch (e: any) { return { error: e.message } }
     }
 

@@ -1,0 +1,35 @@
+# /etc/systemd/system/betanbm-web.service
+# Ajusta User y la ruta de bun (`which bun`).
+[Unit]
+Description=Betan web (Bun + Hono) - www.betanbm.com
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/srv/betanbm/server
+EnvironmentFile=/srv/betanbm/server/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/local/bin/bun run index.ts
+Restart=on-failure
+RestartSec=3
+# Endurecimiento: solo puede escribir la BD (server/data)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/betanbm/server/data
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=betanbm-web
+
+[Install]
+WantedBy=multi-user.target

@@ -160,7 +160,7 @@ app.get('/bed-view', zValidator('query', z.object({
       with: {
         room: true,
         guest: true,
-        reservation: { columns: { id: true, status: true, checkInDate: true, checkOutDate: true } },
+        reservation: { columns: { id: true, status: true, checkInDate: true, checkOutDate: true, people: true } },
       },
       orderBy: [reservationNights.date, reservationNights.roomId],
     })

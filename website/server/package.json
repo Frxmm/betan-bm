@@ -1,0 +1,23 @@
+{
+  "name": "betanbm-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot run index.ts",
+    "start": "bun run index.ts",
+    "test": "bun test",
+    "sitemap": "bun run scripts/sitemap.ts",
+    "pdf": "bun run scripts/pdf.ts"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "marked": "^18.1.1",
+    "nodemailer": "^10.1.6",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "@types/nodemailer": "^8.0.2",
+    "typescript": "^7.0.2"
+  }
+}

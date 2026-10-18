@@ -538,12 +538,29 @@ export async function computeJumboDirtyEntries(candidateDates: string[], opts: {
   const jumboRate = { ...rateRow, roomTypeId: cfg.roomTypeId ?? rateRow.roomTypeId }
   if (jumboRate.roomTypeId == null) return { skipped: true, reason: 'tarifa de Jumbo sin tipo de habitación de referencia (jumbo.roomTypeId o rates.room_type_id)' }
 
-  const [resolvedPrices, resolvedAvailability] = await Promise.all([
+  const ratesById = await buildRateChain(jumboRate)
+  const chainIds  = [...ratesById.keys()]
+
+  const [resolvedPrices, resolvedAvailability, closedRows] = await Promise.all([
     resolveJumboPricesForDates(jumboRate, candidateDates),
     resolveJumboAvailabilityForDates(candidateDates),
+    // Si la tarifa de Jumbo o cualquier tarifa de su cadena está cerrada para
+    // una fecha, equivale a disponibilidad 0 — se dispara stopSales igual que
+    // cuando no quedan habitaciones físicas libres.
+    db.select({ date: rateDailyPrices.date }).from(rateDailyPrices).where(and(
+      eq(rateDailyPrices.propertyId, getPropertyId()),
+      inArray(rateDailyPrices.rateId, chainIds),
+      inArray(rateDailyPrices.date, candidateDates),
+      eq(rateDailyPrices.closed, true),
+    )),
   ])
-  if (resolvedPrices.size === 0 && resolvedAvailability.size === 0) {
+  if (resolvedPrices.size === 0 && resolvedAvailability.size === 0 && closedRows.length === 0) {
     return { skipped: true, reason: 'sin precio ni disponibilidad resolubles para esas fechas' }
+  }
+
+  // Fechas marcadas como cerradas en la cadena de la tarifa de Jumbo → forzar avail=0
+  for (const { date } of closedRows) {
+    resolvedAvailability.set(date, 0)
   }
 
   const allDates = new Set([...resolvedPrices.keys(), ...resolvedAvailability.keys()])

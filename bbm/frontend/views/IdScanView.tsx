@@ -19,32 +19,22 @@ function todayMadrid(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date())
 }
 
-// Las fotos de cámara de un móvil pueden pesar varios MB — se reduce a un
-// tamaño razonable antes de subirla (más rápido, y de sobra para que la IA
-// lea el texto bien).
-function downscaleToDataUrl(file: File, maxDim = 1600, quality = 0.85): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-    img.onload = () => {
-      let { width, height } = img
-      if (width > maxDim || height > maxDim) {
-        const scale = maxDim / Math.max(width, height)
-        width = Math.round(width * scale)
-        height = Math.round(height * scale)
-      }
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { URL.revokeObjectURL(url); reject(new Error('No se pudo procesar la imagen')); return }
-      ctx.drawImage(img, 0, 0, width, height)
-      URL.revokeObjectURL(url)
-      resolve(canvas.toDataURL('image/jpeg', quality))
-    }
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la imagen')) }
-    img.src = url
-  })
+// Recorta/escala un frame de vídeo a un tamaño razonable antes de subirlo
+// (más rápido, y de sobra para que la IA lea el texto bien).
+function videoFrameToDataUrl(video: HTMLVideoElement, maxDim = 1600, quality = 0.85): string {
+  let width = video.videoWidth
+  let height = video.videoHeight
+  if (width > maxDim || height > maxDim) {
+    const scale = maxDim / Math.max(width, height)
+    width = Math.round(width * scale)
+    height = Math.round(height * scale)
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')!
+  ctx.drawImage(video, 0, 0, width, height)
+  return canvas.toDataURL('image/jpeg', quality)
 }
 
 interface Slot {
@@ -84,6 +74,15 @@ export default function IdScanView() {
 
   useEffect(() => { if (resId != null) loadSlots(resId) }, [resId, loadSlots])
 
+  const [doneToday, setDoneToday] = useState<Awaited<ReturnType<typeof api.idScanDoneToday>>['data']>([])
+  const loadDoneToday = useCallback(async () => {
+    try {
+      const r = await api.idScanDoneToday()
+      setDoneToday(r.data)
+    } catch (e: any) { toast(e.message, 'err') }
+  }, [])
+  useEffect(() => { loadDoneToday() }, [loadDoneToday])
+
   const selectedRes = arrivals.find(r => r.id === resId) ?? null
 
   const slots: Slot[] = slotsData ? [
@@ -94,7 +93,11 @@ export default function IdScanView() {
     })),
   ] : []
 
-  const closeReview = () => { setActiveSlot(null); if (resId != null) loadSlots(resId) }
+  const closeReview = () => { setActiveSlot(null); if (resId != null) loadSlots(resId); loadDoneToday() }
+
+  function fmtScanTime(iso: string): string {
+    return new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+  }
 
   return (
     <div className="view-container" style={{ maxWidth: 560 }}>
@@ -106,30 +109,51 @@ export default function IdScanView() {
       </div>
 
       {resId == null ? (
-        loading ? (
-          <div className="loading">Cargando…</div>
-        ) : arrivals.length === 0 ? (
-          <div className="empty"><p>No hay llegadas pendientes para hoy</p></div>
-        ) : (
-          <div className="hk-list">
-            {arrivals.map(res => (
-              <button key={res.id} onClick={() => setResId(res.id)}
-                className="card" style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  width: '100%', textAlign: 'left', padding: '14px 16px', cursor: 'pointer',
-                  border: '1px solid var(--border)', background: 'var(--bg2)',
-                }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 15 }}>{res.guest?.firstName} {res.guest?.lastName}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
-                    Hab. {res.room?.code ?? '—'} · {res.people} persona{res.people === 1 ? '' : 's'} · {res.bookingChannel?.name ?? '—'}
+        <>
+          {loading ? (
+            <div className="loading">Cargando…</div>
+          ) : arrivals.length === 0 ? (
+            <div className="empty"><p>No hay llegadas pendientes para hoy</p></div>
+          ) : (
+            <div className="hk-list">
+              {arrivals.map(res => (
+                <button key={res.id} onClick={() => setResId(res.id)}
+                  className="card" style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    width: '100%', textAlign: 'left', padding: '14px 16px', cursor: 'pointer',
+                    border: '1px solid var(--border)', background: 'var(--bg2)',
+                  }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>{res.guest?.firstName} {res.guest?.lastName}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
+                      Hab. {res.room?.code ?? '—'} · {res.people} persona{res.people === 1 ? '' : 's'} · {res.bookingChannel?.name ?? '—'}
+                    </div>
                   </div>
-                </div>
-                <span style={{ fontSize: 20, color: 'var(--text2)' }}>›</span>
-              </button>
-            ))}
-          </div>
-        )
+                  <span style={{ fontSize: 20, color: 'var(--text2)' }}>›</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {doneToday.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              <h3 style={{ fontSize: 14, margin: '0 0 10px' }}>Ya realizados hoy ({doneToday.length})</h3>
+              <div className="hk-list">
+                {doneToday.map(d => (
+                  <div key={d.guest_id} className="card" style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{d.first_name} {d.last_name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
+                        {d.room_code ? `Hab. ${d.room_code} · ` : ''}{d.emp_first_name ? `${d.emp_first_name} ${d.emp_last_name ?? ''}` : 'empleado desconocido'}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text2)', flexShrink: 0 }}>{fmtScanTime(d.scanned_at)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       ) : (
         <>
           <button className="btn btn-ghost btn-xs" style={{ marginBottom: 12 }} onClick={() => { setResId(null); setSlotsData(null) }}>
@@ -182,12 +206,37 @@ export default function IdScanView() {
 
 type ScanPhase = 'camera' | 'extracting' | 'review'
 
+// Parámetros de la detección de "quietud" para disparar la foto sola: se
+// comparan muestras pequeñas (en gris) del vídeo a intervalos; si la
+// diferencia media entre muestras consecutivas se mantiene por debajo del
+// umbral varias veces seguidas, se considera que el documento está bien
+// encuadrado y quieto y se captura automáticamente.
+const STILL_SAMPLE_SIZE   = 48
+const STILL_THRESHOLD     = 6
+const STILL_FRAMES_NEEDED = 5
+// 2.5s da tiempo real a coger el móvil, encuadrar el documento dentro de la
+// guía y sujetarlo — con menos, si la cámara ya estaba quieta desde el
+// principio (apoyada, o el usuario tarda en moverla), podía disparar casi al
+// instante sin dejar centrar el documento.
+const STILL_WARMUP_MS     = 2500
+
 function ScanModal({ reservationId, slot, onClose }: { reservationId: number; slot: Slot; onClose: () => void }) {
   const [phase, setPhase]   = useState<ScanPhase>('camera')
   const [note,  setNote]    = useState('')
   const [docError, setDocError] = useState('')
   const [saving, setSaving] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [camError, setCamError]   = useState('')
+  const [camStatus, setCamStatus] = useState('Preparando cámara…')
+  const [camAttempt, setCamAttempt] = useState(0)
+
+  const videoRef      = useRef<HTMLVideoElement>(null)
+  const streamRef      = useRef<MediaStream | null>(null)
+  const diffCanvasRef  = useRef<HTMLCanvasElement | null>(null)
+  const rafRef         = useRef<number | null>(null)
+  const prevFrameRef   = useRef<Uint8ClampedArray | null>(null)
+  const stillCountRef  = useRef(0)
+  const startedAtRef   = useRef(0)
+  const capturedRef    = useRef(false)
 
   const [form, setForm] = useState({
     firstName: slot.current?.firstName ?? '',
@@ -205,37 +254,110 @@ function ScanModal({ reservationId, slot, onClose }: { reservationId: number; sl
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
 
-  const onFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const applyExtractedFields = (d: any) => {
+    setForm(f => ({
+      ...f,
+      firstName: d.firstName ?? f.firstName,
+      lastName: d.lastName ?? f.lastName,
+      secondLastName: d.secondLastName ?? f.secondLastName,
+      gender: d.gender ?? f.gender,
+      dateOfBirth: d.dateOfBirth ?? f.dateOfBirth,
+      nationality: d.nationality ?? f.nationality,
+      idDocType: d.idDocType ?? f.idDocType,
+      idDocNumber: d.idDocNumber ?? f.idDocNumber,
+      idDocSupportNumber: d.idDocSupportNumber ?? f.idDocSupportNumber,
+      idDocIssueDate: d.idDocIssueDate ?? f.idDocIssueDate,
+      idDocExpiryDate: d.idDocExpiryDate ?? f.idDocExpiryDate,
+    }))
+    setNote(d.lowConfidenceNote ?? '')
+  }
+
+  const stopCamera = useCallback(() => {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+  }, [])
+
+  const doCapture = useCallback(async () => {
+    const video = videoRef.current
+    if (!video || capturedRef.current) return
+    capturedRef.current = true
+    stopCamera()
+    const dataUrl = videoFrameToDataUrl(video)
     setPhase('extracting')
     try {
-      const dataUrl = await downscaleToDataUrl(file)
       const r = await api.idScanExtract(dataUrl)
-      const d: any = r.data
-      setForm(f => ({
-        ...f,
-        firstName: d.firstName ?? f.firstName,
-        lastName: d.lastName ?? f.lastName,
-        secondLastName: d.secondLastName ?? f.secondLastName,
-        gender: d.gender ?? f.gender,
-        dateOfBirth: d.dateOfBirth ?? f.dateOfBirth,
-        nationality: d.nationality ?? f.nationality,
-        idDocType: d.idDocType ?? f.idDocType,
-        idDocNumber: d.idDocNumber ?? f.idDocNumber,
-        idDocSupportNumber: d.idDocSupportNumber ?? f.idDocSupportNumber,
-        idDocIssueDate: d.idDocIssueDate ?? f.idDocIssueDate,
-        idDocExpiryDate: d.idDocExpiryDate ?? f.idDocExpiryDate,
-      }))
-      setNote(d.lowConfidenceNote ?? '')
+      applyExtractedFields(r.data)
       setPhase('review')
     } catch (err: any) {
       toast(err.message, 'err')
       setPhase('camera')
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = ''
     }
-  }
+  }, [stopCamera])
+
+  // Bucle de muestreo para detectar "quietud" y disparar la foto sin que el
+  // usuario tenga que pulsar nada — compara cada muestra en gris con la
+  // anterior; si varias seguidas casi no cambian, se da por bien encuadrado.
+  const sampleLoop = useCallback(() => {
+    const video = videoRef.current
+    if (!video || capturedRef.current) return
+    if (video.readyState < 2) { rafRef.current = requestAnimationFrame(sampleLoop); return }
+    if (!diffCanvasRef.current) diffCanvasRef.current = document.createElement('canvas')
+    const canvas = diffCanvasRef.current
+    canvas.width = STILL_SAMPLE_SIZE
+    canvas.height = STILL_SAMPLE_SIZE
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) { rafRef.current = requestAnimationFrame(sampleLoop); return }
+    ctx.drawImage(video, 0, 0, STILL_SAMPLE_SIZE, STILL_SAMPLE_SIZE)
+    const pixels = ctx.getImageData(0, 0, STILL_SAMPLE_SIZE, STILL_SAMPLE_SIZE).data
+    const gray = new Uint8ClampedArray(STILL_SAMPLE_SIZE * STILL_SAMPLE_SIZE)
+    for (let i = 0; i < gray.length; i++) {
+      const o = i * 4
+      gray[i] = pixels[o]! * 0.299 + pixels[o + 1]! * 0.587 + pixels[o + 2]! * 0.114
+    }
+    const prev = prevFrameRef.current
+    if (prev && Date.now() - startedAtRef.current > STILL_WARMUP_MS) {
+      let diffSum = 0
+      for (let i = 0; i < gray.length; i++) diffSum += Math.abs(gray[i]! - prev[i]!)
+      if (diffSum / gray.length < STILL_THRESHOLD) {
+        stillCountRef.current++
+        if (stillCountRef.current >= STILL_FRAMES_NEEDED) { doCapture(); return }
+      } else {
+        stillCountRef.current = 0
+      }
+    }
+    prevFrameRef.current = gray
+    rafRef.current = requestAnimationFrame(sampleLoop)
+  }, [doCapture])
+
+  useEffect(() => {
+    if (phase !== 'camera') return
+    capturedRef.current = false
+    stillCountRef.current = 0
+    prevFrameRef.current = null
+    setCamError('')
+    setCamStatus('Preparando cámara…')
+    let cancelled = false
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+      .then(stream => {
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          videoRef.current.play().catch(() => {})
+        }
+        startedAtRef.current = Date.now()
+        setCamStatus('Encuadra el documento dentro del marco y sujétalo quieto — se hace la foto sola')
+        rafRef.current = requestAnimationFrame(sampleLoop)
+      })
+      .catch(() => {
+        setCamError('No se pudo acceder a la cámara. Revisa los permisos del navegador para esta página.')
+      })
+    return () => { cancelled = true; stopCamera() }
+  }, [phase, camAttempt, sampleLoop, stopCamera])
+
+  useEffect(() => stopCamera, [stopCamera])
 
   const save = async () => {
     const err = validateIdDocNumber(form.idDocType, form.idDocNumber)
@@ -265,17 +387,40 @@ function ScanModal({ reservationId, slot, onClose }: { reservationId: number; sl
         </div>
 
         {phase === 'camera' && (
-          <div style={{ textAlign: 'center', padding: '24px 0' }}>
-            <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
-              Haz una foto del DNI, NIE o pasaporte — bien iluminado y sin reflejos.
-            </p>
-            <input
-              ref={fileInputRef} type="file" accept="image/*" capture="environment"
-              onChange={onFileChosen} style={{ display: 'none' }} id="id-scan-file"
-            />
-            <label htmlFor="id-scan-file" className="btn btn-primary" style={{ fontSize: 16, padding: '14px 28px', cursor: 'pointer' }}>
-              📷 Abrir cámara
-            </label>
+          <div style={{ textAlign: 'center', padding: '8px 0' }}>
+            {camError ? (
+              <div style={{ padding: '24px 0' }}>
+                <p style={{ fontSize: 13, color: 'var(--red)', marginBottom: 16 }}>{camError}</p>
+                <button className="btn btn-primary" onClick={() => setCamAttempt(n => n + 1)}>Reintentar</button>
+              </div>
+            ) : (
+              <>
+                <div style={{
+                  position: 'relative', borderRadius: 10, overflow: 'hidden',
+                  background: '#000', aspectRatio: '4 / 3', marginBottom: 10,
+                }}>
+                  <video ref={videoRef} autoPlay playsInline muted
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  {/* Guía visual: proporción típica de un DNI/carnet (ISO/IEC 7810 ID-1,
+                      ~1,586:1) centrada, para saber dónde encuadrar el documento —
+                      antes no había ninguna referencia, solo el texto de abajo. */}
+                  <div style={{
+                    position: 'absolute', inset: 0, display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
+                  }}>
+                    <div style={{
+                      width: '82%', aspectRatio: '1.586 / 1',
+                      border: '3px dashed rgba(255,255,255,.85)', borderRadius: 12,
+                      boxShadow: '0 0 0 2000px rgba(0,0,0,.35)',
+                    }} />
+                  </div>
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 14 }}>{camStatus}</p>
+                <button className="btn btn-primary" style={{ fontSize: 15, padding: '12px 24px' }} onClick={doCapture}>
+                  📷 Capturar ahora
+                </button>
+              </>
+            )}
           </div>
         )}
 

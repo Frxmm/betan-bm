@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../db'
 import { reservations, reservationNights, reservationNotes, reservationSaleItems, saleItems, guests, rooms, roomTypes, rates, rateDailyPrices, bookingChannels, financialTransactions, invoices, guestContracts, blockedBeds, currencies } from '../db/schema'
-import { eq, and, gte, lte, lt, gt, ne, or, ilike, asc, desc, count, inArray, isNotNull, sql, type SQL, type SQLWrapper } from 'drizzle-orm'
+import { eq, and, gte, lte, lt, gt, ne, or, ilike, asc, desc, count, inArray, notInArray, isNotNull, sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import { notFound, conflict, serverError } from '../lib/errors'
 import { isAdmin } from '../middleware/auth'
 import { createPasscode, deletePasscode, isConfigured as ttlockConfigured } from '../lib/ttlock'
@@ -97,6 +97,9 @@ const updateSchema = createSchema.partial().extend({
   // tipo virtual — ver el bloque de historial más abajo, que es quien de
   // verdad exige y comprueba la longitud (aquí solo se acepta el campo).
   changeReason: z.string().max(500).optional(),
+  // Habitaciones de la reserva marcadas como "cerradas" (ver lockedRoomIds en
+  // el schema) — no exige motivo, es un simple toggle.
+  lockedRoomIds: z.array(z.number().int().positive()).optional(),
 })
 
 const searchSchema = z.object({
@@ -595,6 +598,7 @@ app.post('/:id/extras', zValidator('json', z.object({
       unitPrice:     String(body.unitPrice),
       date:          body.date,
       notes:         body.notes,
+      createdBy:     getUserId(c) ?? null,
     }).returning()
     // Actualizar total de la reserva sumando el extra
     const extra = body.quantity * body.unitPrice
@@ -761,7 +765,11 @@ app.get('/:id/history', async (c) => {
   } catch (err) { return serverError(c, err) }
 })
 
-// Verifica solapamiento de reservas en una misma habitación (excluye canceladas).
+// Verifica solapamiento de reservas en una misma habitación (excluye
+// canceladas y no-shows — un no-show significa que nadie se presentó, así
+// que esas fechas quedan libres de verdad; mismo criterio que ya usa Planning
+// para pintar la habitación como libre, ver frontend/views/PlanningView.tsx
+// activeRes = !['cancelled','no_show'].includes(r.status)).
 // Las habitaciones virtuales (isVirtual=true) admiten varias reservas simultáneas.
 // Exportada — también la usa el portal de cliente (src/routes/customer.ts) para
 // comprobar disponibilidad al ampliar una estancia.
@@ -782,7 +790,7 @@ export async function hasRoomOverlap(
     eq(reservations.roomId, roomId),
     lt(reservations.checkInDate, checkOutDate),
     gt(reservations.checkOutDate, checkInDate),
-    ne(reservations.status, 'cancelled'),
+    notInArray(reservations.status, ['cancelled', 'no_show']),
   ]
   if (excludeId !== undefined) conds.push(ne(reservations.id, excludeId))
   const [hit] = await db
@@ -888,6 +896,17 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
       (new Date(newCheckOut).getTime() - new Date(newCheckIn).getTime()) / 86400000
     )
 
+    // Mover una reserva de un día a otro (arrastrándola en el Planning, que
+    // siempre manda checkInDate ahí) solo lo puede hacer admin/dirección —
+    // cambiar de habitación el mismo día sigue abierto a recepción, igual
+    // que ampliar la estancia (ExtendReservationModal, que solo toca
+    // checkOutDate y no pasa por aquí con checkInDate). Comprobado en el
+    // backend, no solo en el frontend, para que no se pueda saltar llamando
+    // a la API directamente.
+    if (body.checkInDate !== undefined && body.checkInDate !== current.checkInDate && !isAdmin(c)) {
+      return c.json({ error: 'Solo admin/dirección puede cambiar la fecha de entrada de una reserva' }, 403)
+    }
+
     // Validar solapamiento si cambia habitación o fechas
     const roomOrDateChanged = body.roomId !== undefined || body.checkInDate !== undefined || body.checkOutDate !== undefined
     if (roomOrDateChanged && current.status !== 'cancelled') {
@@ -899,10 +918,11 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
     }
 
     // Cambio de habitación delicado: huésped ya en casa (checked_in), o el
-    // tipo nuevo es virtual (cualquier estado) — en ambos casos exige un
-    // motivo de al menos 5 palabras reales (hasMinWords, ignora puntuación
-    // suelta) que quede en el historial. Se resuelve ANTES del update para
-    // poder rechazarlo sin escribir nada si falta el motivo.
+    // tipo nuevo es virtual (solo permitido tras el check-out, ver abajo) —
+    // en ambos casos exige un motivo de al menos 5 palabras reales
+    // (hasMinWords, ignora puntuación suelta) que quede en el historial.
+    // Se resuelve ANTES del update para poder rechazarlo sin escribir nada
+    // si falta el motivo.
     const roomChanging = body.roomId !== undefined && body.roomId !== current.roomId
     let newRoomWithType: (typeof current.room & { roomType: any }) | null = null
     if (roomChanging) {
@@ -910,11 +930,16 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
         where: and(eq(rooms.id, body.roomId!), eq(rooms.propertyId, getPropertyId())), with: { roomType: true },
       }) as any
       const targetIsVirtual = !!(newRoomWithType as any)?.roomType?.isVirtual
+      // Mover a una habitación virtual (agrupación de facturación) solo
+      // tiene sentido una vez la estancia real ha terminado — si no, se
+      // perdería el seguimiento normal de la reserva (check-in, ZKTeco,
+      // limpieza...) mientras el huésped sigue físicamente alojado.
+      if (targetIsVirtual && current.status !== 'checked_out') {
+        return c.json({ error: 'La reserva debe estar en estado "Ha salido" (check-out) antes de moverla a una habitación virtual' }, 400)
+      }
       const needsReason = current.status === 'checked_in' || targetIsVirtual
       if (needsReason && !hasMinWords(body.changeReason, 5)) {
-        const why = current.status === 'checked_in' && targetIsVirtual
-          ? 'el huésped ya está en casa y el nuevo tipo es virtual'
-          : current.status === 'checked_in' ? 'el huésped ya está en casa' : 'el nuevo tipo es virtual'
+        const why = current.status === 'checked_in' ? 'el huésped ya está en casa' : 'el nuevo tipo es virtual'
         return c.json({ error: `Este cambio de habitación necesita una explicación de al menos 5 palabras (${why})` }, 400)
       }
     }
@@ -930,25 +955,14 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
       return c.json({ error: 'Quitar una habitación extra necesita una explicación de al menos 5 palabras' }, 400)
     }
 
-    // Añadir habitación extra: dirección puede hacerlo siempre (igual que
-    // hasta ahora). Recepción solo puede hacerlo si la reserva es Walk-in Y
-    // se reservó hoy mismo — para el resto (OTA/web, o Walk-in de otro día)
-    // tiene que pasar por dirección. El frontend ya oculta el botón en ese
-    // caso (canAddExtraRoomReception en ReservationDetailView.tsx), esto es
-    // la comprobación real.
-    if (addedExtraIds.length > 0 && !isAdmin(c)) {
-      // Canal Walk-in: ids en el ajuste `channels.walkInChannelIds` del tenant; si no está
-      // configurado, se reconoce por el nombre estándar "Walk-in".
-      const walkInIds = await getSetting<number[]>('channels.walkInChannelIds')
-      const isWalkIn = walkInIds && walkInIds.length > 0
-        ? current.bookingChannelId != null && walkInIds.includes(current.bookingChannelId)
-        : (current.bookingChannel?.name ?? '').trim().toLowerCase() === 'walk-in'
-      const tz = (await getBranding()).timezone
-      const todayMadrid  = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
-      const bookedMadrid = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(current.bookedAt)
-      if (!isWalkIn || bookedMadrid !== todayMadrid) {
-        return c.json({ error: 'Solo se puede añadir habitación extra a reservas Walk-in hechas hoy mismo — para el resto, contacta con dirección' }, 403)
-      }
+    // Añadir habitación extra: dirección puede hacerlo siempre, sin motivo
+    // (igual que hasta ahora). Recepción puede hacerlo para cualquier canal
+    // de reserva (antes solo Walk-in hecho hoy mismo), pero exige la misma
+    // explicación de al menos 5 palabras reales que ya se usa para quitar
+    // una habitación extra o un cambio de habitación delicado — queda en el
+    // historial de quién añadió qué y por qué.
+    if (addedExtraIds.length > 0 && !isAdmin(c) && !hasMinWords(body.changeReason, 5)) {
+      return c.json({ error: 'Añadir una habitación extra necesita una explicación de al menos 5 palabras' }, 400)
     }
 
     const { total: totalBody2, changeReason, ...bodyRest } = body
@@ -1021,8 +1035,18 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
         ? { status: 'checked_in' as const }
         : {}
 
+    // Ampliación de estancia (ver también la marca "🛏️ Ampliación" más abajo,
+    // que usa la alerta extension-unpaid): guardar un snapshot de ANTES de
+    // esta ampliación para poder deshacer solo-esta (un nivel), mientras no
+    // se haya cobrado — ver POST /:id/undo-extension. Se sobrescribe en cada
+    // ampliación nueva, así que solo la última es deshacible.
+    const extended = body.checkOutDate !== undefined && newCheckOut > current.checkOutDate
+    const pendingExtensionUpdate = extended
+      ? { pendingExtension: { prevCheckOutDate: current.checkOutDate, prevNights: current.nights, prevTotal: current.total, extendedAt: new Date().toISOString() } }
+      : {}
+
     const [updated] = await db.update(reservations)
-      .set({ ...bodyRest, ...statusCorrection, nights: newNights, updatedAt: new Date(), ...(newTotal !== undefined ? { total: newTotal } : {}) })
+      .set({ ...bodyRest, ...statusCorrection, ...pendingExtensionUpdate, nights: newNights, updatedAt: new Date(), ...(newTotal !== undefined ? { total: newTotal } : {}) })
       .where(and(eq(reservations.id, id), eq(reservations.propertyId, getPropertyId())))
       .returning()
 
@@ -1062,6 +1086,11 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
         } else {
           changes.push('Sin precio configurado para calcular el importe de la(s) habitación(es) extra — revisa el total a mano')
         }
+        // Motivo — solo es obligatorio para recepción (ver comprobación de
+        // arriba), pero si lo manda igual (p.ej. dirección) se registra también.
+        if (changeReason && hasMinWords(changeReason, 1)) {
+          changes.push(`Motivo de la habitación extra añadida: ${changeReason}`)
+        }
       }
       if (removedExtraIds.length > 0) {
         changes.push(`Habitación(es) extra quitada(s): ${removedExtraIds.map(id => codeById.get(id) ?? `#${id}`).join(', ')}`)
@@ -1072,7 +1101,12 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
       changes.push(`Entrada: ${fmtD(current.checkInDate)} → ${fmtD(body.checkInDate)}`)
     }
     if (body.checkOutDate !== undefined && body.checkOutDate !== current.checkOutDate) {
-      changes.push(`Salida: ${fmtD(current.checkOutDate)} → ${fmtD(body.checkOutDate)}`)
+      // Marca "🛏️ Ampliación" (en vez de solo "Salida") cuando la fecha de
+      // salida se alarga — la usa GET /api/alerts/urgent (extension-unpaid)
+      // para detectar reservas ampliadas que se quedan sin cobrar, sin
+      // necesitar una columna nueva para "fecha de salida original".
+      const extended = body.checkOutDate > current.checkOutDate
+      changes.push(`${extended ? '🛏️ Ampliación' : 'Salida'}: ${fmtD(current.checkOutDate)} → ${fmtD(body.checkOutDate)}`)
     }
     if (body.people !== undefined && body.people !== current.people) {
       changes.push(`Personas: ${current.people} → ${body.people}`)
@@ -1111,6 +1145,58 @@ app.patch('/:id', zValidator('json', updateSchema, (result, c) => {
     } else if (body.status && body.status !== current.status) {
       await logStatusChange(id, current.status, body.status as string, 'user', userId)
     }
+
+    return c.json({ data: updated })
+  } catch (err) {
+    return serverError(c, err)
+  }
+})
+
+// POST /api/reservations/:id/undo-extension — deshacer la ÚLTIMA ampliación
+// de estancia (ver pendingExtension en el schema), solo si lo ampliado sigue
+// sin cobrar. Un solo nivel: si se amplió dos veces sin cobrar, esto solo
+// revierte la segunda.
+app.post('/:id/undo-extension', async (c) => {
+  try {
+    const id     = Number(c.req.param('id'))
+    const userId = getUserId(c)
+    const reservation = await db.query.reservations.findFirst({ where: and(eq(reservations.id, id), eq(reservations.propertyId, getPropertyId())) })
+    if (!reservation) return notFound(c, 'Reserva')
+
+    const pending = reservation.pendingExtension
+    // El checkOutDate actual debe seguir siendo posterior al de antes de la
+    // ampliación — si no, algo más (partir reserva, otra edición manual) ya
+    // movió la fecha después de ampliar y este snapshot ya no es fiable.
+    if (!pending || !(reservation.checkOutDate > pending.prevCheckOutDate)) {
+      return conflict(c, 'No hay ninguna ampliación pendiente de deshacer')
+    }
+    if (['checked_out', 'cancelled'].includes(reservation.status)) {
+      return conflict(c, `No se puede deshacer una ampliación en estado '${reservation.status}'`)
+    }
+
+    const realPaid = (await realPaidByReservation([id])).get(id) ?? 0
+    const due = calcPendingBalance(reservation.total, realPaid)
+    if (due <= 0.10) {
+      return conflict(c, 'Esta ampliación ya está cobrada — no se puede deshacer')
+    }
+
+    const [updated] = await db.update(reservations)
+      .set({
+        checkOutDate:     pending.prevCheckOutDate,
+        nights:           pending.prevNights,
+        total:            pending.prevTotal,
+        pendingExtension: null,
+        updatedAt:        new Date(),
+      })
+      .where(and(eq(reservations.id, id), eq(reservations.propertyId, getPropertyId())))
+      .returning()
+
+    await db.insert(reservationNotes).values({
+      reservationId: id,
+      authorId:      userId,
+      note:          `↩️ Ampliación deshecha (sin cobrar): salida ${fmtD(reservation.checkOutDate)} → ${fmtD(pending.prevCheckOutDate)}, total ${reservation.total} ${currencySymbol((await getBranding()).currencyCode)} → ${pending.prevTotal} ${currencySymbol((await getBranding()).currencyCode)}`,
+      type:          'change',
+    })
 
     return c.json({ data: updated })
   } catch (err) {
@@ -1235,7 +1321,7 @@ app.post('/:id/check-in', zValidator('json', checkInGuestSchema), async (c) => {
             // Ventana completa: desde el check-in de la PRIMERA reserva hasta
             // el check-out de esta segunda — no solo las fechas de esta última.
             await reenrollCard(
-              { id, zktecoCardBe: prev.zktecoCardBe, ttlockCardIds: prev.ttlockCardIds, guest: reservation.guest as any },
+              { id, zktecoCardBe: prev.zktecoCardBe, ttlockCardIds: prev.ttlockCardIds, zktecoExtraCards: (prev as any).zktecoExtraCards ?? null, guest: reservation.guest as any },
               lockRooms, await propertyMs(prev.checkInDate, 14), await propertyMs(reservation.checkOutDate, 12),
             ).catch(() => {})
           }
@@ -1437,10 +1523,35 @@ app.post('/:id/cancel', async (c) => {
       return conflict(c, `No se puede cancelar una reserva en estado '${reservation.status}'`)
     }
 
+    const body = await c.req.json().catch(() => ({})) as { changeReason?: string }
+
+    // Recepción no puede cancelar una reserva con el huésped ya alojado
+    // (checked_in) — eso requiere intervención de admin/dirección. Y para
+    // cualquier cancelación de recepción se exige un motivo real de al
+    // menos 10 palabras, que queda en el historial de la reserva.
+    // Admin/dirección queda sin estas restricciones.
+    if (!isAdmin(c)) {
+      if (reservation.status === 'checked_in') {
+        return conflict(c, 'No se puede cancelar una reserva con el huésped ya alojado (checked-in) — pide a admin/dirección que la cancele')
+      }
+      if (!hasMinWords(body.changeReason, 10)) {
+        return c.json({ error: 'Para cancelar una reserva hace falta un motivo de al menos 10 palabras' }, 400)
+      }
+    }
+
     const [updated] = await db.update(reservations)
       .set({ status: 'cancelled', previousStatus: reservation.status, updatedAt: new Date() })
       .where(and(eq(reservations.id, id), eq(reservations.propertyId, getPropertyId())))
       .returning()
+
+    if (hasMinWords(body.changeReason, 1)) {
+      await db.insert(reservationNotes).values({
+        reservationId: id,
+        authorId:      userId,
+        note:          `Motivo de la cancelación: ${body.changeReason}`,
+        type:          'change',
+      })
+    }
 
     await logStatusChange(id, reservation.status, 'cancelled', 'cancel', userId)
 
@@ -2137,11 +2248,19 @@ app.delete('/:id/guests/:guestId', async (c) => {
 
     const reservation = await db.query.reservations.findFirst({
       where: and(eq(reservations.id, id), eq(reservations.propertyId, getPropertyId())),
-      columns: { guestId: true },
+      columns: { guestId: true, lockedRoomIds: true },
     })
     if (!reservation) return notFound(c, 'Reserva')
     if (reservation.guestId === guestId) {
       return c.json({ error: 'No se puede quitar al huésped titular' }, 400)
+    }
+
+    const guestNight = await db.query.reservationNights.findFirst({
+      where: and(eq(reservationNights.reservationId, id), eq(reservationNights.guestId, guestId)),
+      columns: { roomId: true },
+    })
+    if (guestNight?.roomId != null && ((reservation.lockedRoomIds as number[] | null) ?? []).includes(guestNight.roomId)) {
+      return c.json({ error: 'Esa habitación está cerrada — no se puede quitar a este huésped' }, 403)
     }
 
     await db.delete(reservationNights)
@@ -2181,6 +2300,9 @@ app.patch('/:id/guests/:guestId/room', zValidator('json', z.object({
 
     const groupRoomIds = [reservation.roomId, ...((reservation.extraRoomIds as number[] | null) ?? [])].filter((x): x is number => x != null)
     if (!groupRoomIds.includes(roomId)) return c.json({ error: 'Esa habitación no pertenece a esta reserva' }, 400)
+    if (((reservation.lockedRoomIds as number[] | null) ?? []).includes(roomId)) {
+      return c.json({ error: 'Esa habitación está marcada como cerrada — no se pueden mover huéspedes a ella' }, 403)
+    }
 
     const room = await db.query.rooms.findFirst({ where: and(eq(rooms.id, roomId), eq(rooms.propertyId, getPropertyId())), columns: { code: true, roomTypeId: true } })
     if (!room?.roomTypeId) return c.json({ error: 'La habitación no tiene tipo configurado' }, 400)

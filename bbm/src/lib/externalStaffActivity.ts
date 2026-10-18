@@ -31,16 +31,40 @@ export function normDay(v: unknown): string | null {
 export const normName = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
 
-// Empareja un nombre externo con un usuario: nombre completo exacto; si no,
-// solo si hay UN único usuario cuyo nombre completo empieza por ese texto (o
-// viceversa). Ambiguo o sin match → null (no se adivina).
+// Empareja un nombre externo con un usuario, probando tres niveles cada vez
+// más permisivos — en cuanto uno da UN único candidato, se usa ese; si da
+// varios (ambiguo) o ninguno, no se adivina y se pasa al siguiente nivel (o
+// se devuelve null si ya era el último):
+//   1. Nombre completo exacto (normalizado: sin acentos, mayúsculas, símbolos).
+//   2. Uno empieza por el otro + espacio (cubre un segundo nombre/apellido
+//      de más al final, p.ej. "Juan Pérez" ↔ "Juan Pérez García").
+//   3. Mismo conjunto de palabras con como mucho 1 de diferencia, sin
+//      importar el orden (cubre apellidos en otro orden, o un nombre/
+//      apellido de más o de menos en cualquier posición, no solo al final).
 export function matchUserByName(ext: string, people: { id: number; name: string }[]): number | null {
   const n = normName(ext)
   if (!n) return null
+
   const exact = people.filter(p => normName(p.name) === n)
   if (exact.length === 1) return exact[0]!.id
-  const loose = people.filter(p => { const pn = normName(p.name); return pn.startsWith(n + ' ') || n.startsWith(pn + ' ') })
-  return loose.length === 1 ? loose[0]!.id : null
+  if (exact.length > 1) return null
+
+  const loose = people.filter(p => {
+    const pn = normName(p.name)
+    return pn.startsWith(n + ' ') || n.startsWith(pn + ' ')
+  })
+  if (loose.length === 1) return loose[0]!.id
+  if (loose.length > 1) return null
+
+  const extWords = new Set(n.split(' ').filter(Boolean))
+  const wordsMatch = people.filter(p => {
+    const pWords = new Set(normName(p.name).split(' ').filter(Boolean))
+    let diff = 0
+    for (const w of extWords) if (!pWords.has(w)) diff++
+    for (const w of pWords) if (!extWords.has(w)) diff++
+    return diff <= 1
+  })
+  return wordsMatch.length === 1 ? wordsMatch[0]!.id : null
 }
 
 async function fetchAll(from: string, to: string): Promise<ExternalEvent[]> {

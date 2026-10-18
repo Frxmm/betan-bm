@@ -40,6 +40,8 @@ import customerRoutes     from './src/routes/customer'
 import roomAccessRoutes   from './src/routes/room-access'
 import idScanRoutes       from './src/routes/id-scan'
 import voiceBriefRoutes   from './src/routes/voice-brief'
+import jumboIntegrationRoutes from './src/routes/jumbo-integration'
+import floorplanRoutes    from './src/routes/floorplans'
 import { startAutoStatusScheduler } from './src/lib/autoStatus'
 import { startCartRecoveryScheduler } from './src/lib/cartRecovery'
 import { startCancellationRecoveryScheduler } from './src/lib/cancellationRecovery'
@@ -72,6 +74,7 @@ app.route('/api/public',         publicRoutes)
 app.route('/api/zkteco',         zktecoRoutes)   // auth manejado por ruta (enroller key + JWT)
 app.route('/api/room-access',    roomAccessRoutes) // auth propia (JWT type='room-guest'), no requireAuth de staff
 app.route('/api/voice-brief',    voiceBriefRoutes) // auth propia (token estático de la app Android), no requireAuth de staff
+app.route('/api/jumbo-integration', jumboIntegrationRoutes) // auth propia (token estático de jumbo_integration.py), no requireAuth de staff
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
 
 // Todas las demás rutas de API requieren auth
@@ -96,6 +99,7 @@ app.route('/api/reports',       reportsRoutes)
 app.route('/api/ttlock',        ttlockRoutes)
 app.route('/api/ses',           sesRoutes)
 app.route('/api/housekeeping',  housekeepingRoutes)
+app.route('/api/floorplans',    floorplanRoutes)  // planos del tenant (módulo liveMap)
 app.route('/api/laundry',       laundryRoutes)
 app.route('/api/nobeds',        nobedsRoutes)
 app.route('/api/fdm',           fdmRoutes)

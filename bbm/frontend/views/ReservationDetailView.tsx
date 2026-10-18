@@ -34,18 +34,6 @@ function normalizeTxt(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
 }
 
-// Recepción solo puede añadir habitación extra a reservas Walk-in hechas HOY
-// mismo (ver canManageReservations) — dirección no pasa por aquí, no tiene
-// esta restricción. El backend (PATCH /api/reservations/:id) vuelve a
-// comprobar esto mismo, esto solo evita mostrar un botón que luego fallaría.
-function canAddExtraRoomReception(res: any): boolean {
-  const isWalkIn = (res.bookingChannel?.name ?? '').trim().toLowerCase() === 'walk-in'
-  if (!isWalkIn || !res.bookedAt) return false
-  const todayMadrid  = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date())
-  const bookedMadrid = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Madrid' }).format(new Date(res.bookedAt))
-  return bookedMadrid === todayMadrid
-}
-
 type Muni = { code: string; name: string }
 type Country = { code: string; code3: string; name: string }
 const MUNI_LIST = MUNICIPALITIES as Muni[]
@@ -1066,6 +1054,9 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
   // Quitar una habitación extra exige motivo (min. 5 palabras) — pasa por
   // este modal en vez de quitarla directamente (ver removeExtraRoom).
   const [removeExtraRoomModal, setRemoveExtraRoomModal] = useState<{ roomId: number; code: string } | null>(null)
+  // Cancelar exige motivo (min. 10 palabras) salvo para admin/dirección —
+  // pasa por este modal en vez de un simple confirm() (ver doCancel).
+  const [showCancelModal, setShowCancelModal] = useState(false)
   const [checkinMenuOpen,   setCheckinMenuOpen]    = useState(false)
   const checkinMenuRef = useRef<HTMLDivElement>(null)
   const [paymentMenuOpen,   setPaymentMenuOpen]    = useState(false)
@@ -1182,6 +1173,7 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
   const isGroupReservation = extraRoomDetails.length > 0
   const groupRooms: any[] = [res.room, ...extraRoomDetails].filter(Boolean)
   const roomCodeById = new Map(groupRooms.map((r: any) => [r.id, r.code]))
+  const lockedRoomIds: number[] = res.lockedRoomIds ?? []
 
   const toggleGuestSort = (by: 'name' | 'room') =>
     setGuestSort(s => s?.by === by ? { by, dir: s.dir === 1 ? -1 : 1 } : { by, dir: 1 })
@@ -1222,6 +1214,19 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
       await syncPeople(resultingTotal)
       toast('Huésped eliminado'); load()
       window.dispatchEvent(new CustomEvent('reservation:changed'))
+    } catch (e: any) { toast(e.message, 'err') }
+  }
+
+  // Marca/desmarca una habitación de la reserva como "cerrada" — ya no se
+  // puede mover a otros huéspedes de la misma reserva a ella (ver también la
+  // comprobación real en el backend, PATCH /:id/guests/:guestId/room).
+  const toggleRoomLock = async (roomId: number) => {
+    const next = lockedRoomIds.includes(roomId)
+      ? lockedRoomIds.filter(id => id !== roomId)
+      : [...lockedRoomIds, roomId]
+    try {
+      await api.updateReservation(res.id, { lockedRoomIds: next } as any)
+      setRes((prev: any) => prev && ({ ...prev, lockedRoomIds: next }))
     } catch (e: any) { toast(e.message, 'err') }
   }
 
@@ -1417,9 +1422,70 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
     } catch (e: any) { toast(e.message, 'err') }
   }
   const doCancel = async () => {
+    // Admin/dirección: cancelación directa, sin motivo obligatorio (igual
+    // que siempre). Recepción: motivo de 10 palabras vía CancelReservationModal,
+    // y ni eso si la reserva ya está checked_in (lo exige también el backend).
+    if (!isAdmin) { setShowCancelModal(true); return }
     if (!confirm('¿Cancelar esta reserva?')) return
     try { await api.cancelReservation(res.id); toast('Reserva cancelada'); goBack() }
     catch (e: any) { toast(e.message, 'err') }
+  }
+  const doCancelWithReason = async (reason: string) => {
+    try { await api.cancelReservation(res.id, { changeReason: reason }); toast('Reserva cancelada'); goBack() }
+    catch (e: any) { toast(e.message, 'err') }
+  }
+  // Deshacer la última ampliación (solo mientras siga sin cobrar — ver
+  // canUndoExtension más abajo y la comprobación igual en el backend).
+  const doUndoExtension = async () => {
+    const p = res.pendingExtension
+    if (!p) return
+    const hadCode = !!(res as any).ttlockCode
+    const hadCard = !!(res as any).zktecoCardBe
+    const lockWarning = (hadCode || hadCard)
+      ? ` Se regenerará ${hadCode && hadCard ? 'el código de la cerradura y la tarjeta' : hadCode ? 'el código de la cerradura' : 'la tarjeta'} para la ventana más corta — lo anterior dejará de funcionar y no se puede recuperar.`
+      : ''
+    if (!confirm(`¿Deshacer la última ampliación? La salida volverá a ${fmtDate(p.prevCheckOutDate)} y el total a ${fmtMoney(p.prevTotal)}.${lockWarning}`)) return
+    try {
+      await api.undoExtension(res.id)
+
+      // Igual que al ampliar (ExtendReservationModal): si había código o
+      // tarjeta TTLock, hay que regenerarlos para la ventana más corta —
+      // el código anterior ya no vale, así que hace falta dar el nuevo.
+      let newCode: string | null = null
+      let codeError: string | null = null
+      let cardError: string | null = null
+      if (hadCode) {
+        try {
+          const r = await fetch(`/api/ttlock/generate/${res.id}`, {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          })
+          const d = await r.json()
+          if (r.ok) newCode = (d.data.entries ?? []).map((e: any) => `${e.room}: ${e.code}#`).join(' · ')
+          else codeError = d.error ?? 'Error'
+        } catch { codeError = 'Error de conexión' }
+      }
+      if (hadCard) {
+        try {
+          const r = await fetch(`/api/ttlock/reenroll-card/${res.id}`, { method: 'POST', credentials: 'include' })
+          const d = await r.json()
+          if (!r.ok || (d.data?.attempted && !d.data.ok)) cardError = d.error ?? d.data?.error ?? 'Error'
+        } catch { cardError = 'Error de conexión' }
+      }
+
+      if (newCode) {
+        toast(`El código de la cerradura ha cambiado. Proporciona el nuevo al cliente: ${newCode}`, 'err')
+      } else if (codeError) {
+        toast(`Ampliación deshecha, pero no se pudo regenerar el código TTLock: ${codeError}`, 'err')
+      } else {
+        toast('Ampliación deshecha')
+      }
+      if (cardError) {
+        toast(`Aviso: no se pudo re-enrolar la tarjeta del huésped tras deshacer la ampliación: ${cardError}`, 'err')
+      }
+      load()
+    } catch (e: any) { toast(e.message, 'err') }
   }
   const doRevertCheckIn = async () => {
     if (!confirm('¿Revertir la reserva a checked-in?')) return
@@ -1547,9 +1613,10 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
         : [{ room: (res.room as any)?.code ?? '?', code: ttlockRaw }])
     : []
 
-  const zktecoCardNo       = (res as any).zktecoCardNo       as string | null
-  const zktecoEnrolledAt   = (res as any).zktecoEnrolledAt   as string | null
+  const zktecoCardNo        = (res as any).zktecoCardNo        as string | null
+  const zktecoEnrolledAt    = (res as any).zktecoEnrolledAt    as string | null
   const zktecoCardRevokedAt = (res as any).zktecoCardRevokedAt as string | null
+  const zktecoExtraCards    = ((res as any).zktecoExtraCards ?? []) as Array<{ cardNo: string; pin: string; enrolledAt: string }>
   // El número sobrevive a una revocación (checkout/cancelación/revocación a
   // mano) — solo se marca zktecoCardRevokedAt, ver schema. "Activa de verdad
   // ahora mismo" es esto, no solo zktecoCardNo.
@@ -1579,7 +1646,10 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
     if (!g.email && !g.phone) m.push('email o teléfono')
     if (!g.idDocType)   m.push('tipo documento')
     if (!g.idDocNumber) m.push('nº documento')
-    if ((g.idDocType === 'dni' || g.idDocType === 'nie') && !g.idDocSupportNumber) m.push('nº soporte')
+    if (g.idDocType === 'dni' || g.idDocType === 'nie') {
+      if (!g.idDocSupportNumber) m.push('nº soporte')
+      else if (!/^[A-Z]{3}[0-9]{6}$/.test(g.idDocSupportNumber)) m.push('nº soporte inválido (3 letras + 6 dígitos)')
+    }
     if (!g.nationality) m.push('nacionalidad')
     return m
   })()
@@ -1716,6 +1786,12 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
         {!['checked_out','cancelled'].includes(res.status) && (
           <button className="btn btn-ghost btn-sm" onClick={() => setShowExtend(true)}>↔ Ampliar</button>
         )}
+        {!['checked_out','cancelled'].includes(res.status) && res.pendingExtension
+          && res.checkOutDate > res.pendingExtension.prevCheckOutDate && due > 0.10 && (
+          <button className="btn btn-ghost btn-sm" onClick={doUndoExtension} title="Solo mientras lo ampliado siga sin cobrar">
+            ↩ Deshacer ampliación
+          </button>
+        )}
         {!['checked_out','cancelled'].includes(res.status) && (
           <button className="btn btn-ghost btn-sm" onClick={() => setShowChangeRoom(true)}>
             {res.roomId ? '⇄ Cambiar hab.' : '⇄ Asignar a habitación'}
@@ -1724,8 +1800,13 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
         {res.roomId && res.nights > 1 && !(res.extraRoomIds?.length > 0) && res.status === 'checked_in' && (
           <button className="btn btn-ghost btn-sm" onClick={() => setShowSplit(true)}>✂ Partir reserva</button>
         )}
-        {!['checked_out','cancelled'].includes(res.status) && (
+        {!['checked_out','cancelled'].includes(res.status) && (isAdmin || res.status !== 'checked_in') && (
           <button className="btn btn-red btn-sm" onClick={doCancel}>Cancelar reserva</button>
+        )}
+        {!isAdmin && res.status === 'checked_in' && (
+          <button className="btn btn-red btn-sm" disabled title="El huésped ya está alojado — pide a admin/dirección que cancele esta reserva">
+            Cancelar reserva
+          </button>
         )}
         {isAdmin && (
           <button className="btn btn-ghost btn-sm" onClick={() => setShowChangeStatus(true)} title="Forzar el estado a cualquier valor, sin pasar por check-in/check-out/cancelación">
@@ -1825,6 +1906,11 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
           {hasActiveZktecoCard ? (
             <>
               <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>✓ Enrollada</span>
+              {zktecoExtraCards.length > 0 && (
+                <span style={{ fontSize: 11, color: 'var(--text2)' }}>
+                  {1 + zktecoExtraCards.length} tarjetas
+                </span>
+              )}
               {zktecoEnrolledAt && (
                 <span style={{ fontSize: 11, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
                   {new Date(zktecoEnrolledAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -1838,19 +1924,41 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
                 {showZktecoDetails ? 'Ocultar' : 'Detalles'}
               </button>
               {showZktecoDetails && (
-                <>
-                  <code style={{ background: 'var(--bg3)', padding: '3px 10px', borderRadius: 8, fontWeight: 700, color: 'var(--green)', fontSize: 14, letterSpacing: 1, flexBasis: '100%' }}>
-                    {zktecoCardNo}
-                  </code>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--red)' }}
-                    disabled={zktecoLoading}
-                    onClick={doRevokeZkteco}
-                  >
-                    Revocar
-                  </button>
-                </>
+                <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {/* Tarjeta primaria */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text2)', minWidth: 60 }}>Tarjeta 1</span>
+                    <code style={{ background: 'var(--bg3)', padding: '3px 10px', borderRadius: 8, fontWeight: 700, color: 'var(--green)', fontSize: 13, letterSpacing: 1 }}>
+                      {zktecoCardNo}
+                    </code>
+                    <span style={{ fontSize: 10, color: 'var(--text3)' }}>PIN {res.id}</span>
+                  </div>
+                  {/* Tarjetas extra */}
+                  {zktecoExtraCards.map((ec, i) => (
+                    <div key={ec.pin} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: 'var(--text2)', minWidth: 60 }}>Tarjeta {i + 2}</span>
+                      <code style={{ background: 'var(--bg3)', padding: '3px 10px', borderRadius: 8, fontWeight: 700, color: 'var(--green)', fontSize: 13, letterSpacing: 1 }}>
+                        {ec.cardNo}
+                      </code>
+                      <span style={{ fontSize: 10, color: 'var(--text3)' }}>PIN {ec.pin}</span>
+                      {ec.enrolledAt && (
+                        <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+                          {new Date(ec.enrolledAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  {isAdmin && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--red)', alignSelf: 'flex-start', marginTop: 4 }}
+                      disabled={zktecoLoading}
+                      onClick={doRevokeZkteco}
+                    >
+                      Revocar todas
+                    </button>
+                  )}
+                </div>
               )}
             </>
           ) : (
@@ -1984,24 +2092,35 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
               {((res.extraRoomIds ?? []).length > 0 || !['checked_out','cancelled'].includes(res.status)) && (
                 <Row k="Habs. adicionales" v={
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-                    {extraRoomDetails.map((r: any) => (
-                      <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, padding: '1px 6px', fontSize: 12 }}>
-                        {r.code}
-                        {/* Un administrador (dirección) puede quitar habitaciones adicionales
-                            en cualquier estado — necesario para limpiar asignaciones erróneas
-                            (ej. las que generó el bug de sync FDM) en reservas ya cerradas.
-                            Recepción solo puede hacerlo mientras la reserva sigue activa. */}
-                        {(isAdmin || (!['checked_out','cancelled'].includes(res.status) && canManageReservations(user))) && (
-                          <button type="button" onClick={() => setRemoveExtraRoomModal({ roomId: r.id, code: r.code })}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', lineHeight: 1, padding: 0, fontSize: 11 }}>✕</button>
-                        )}
-                      </span>
-                    ))}
-                    {/* Dirección puede añadir habitación extra a cualquier reserva (igual
-                        que siempre). Recepción solo a reservas Walk-in hechas hoy mismo —
-                        evita añadir habitaciones sueltas a reservas de OTA/web o de días
-                        anteriores, donde el precio/disponibilidad ya no es tan sencillo. */}
-                    {!['checked_out','cancelled'].includes(res.status) && canManageReservations(user) && (isAdmin || canAddExtraRoomReception(res)) && (
+                    {extraRoomDetails.map((r: any) => {
+                      const locked = lockedRoomIds.includes(r.id)
+                      return (
+                        <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, padding: '1px 6px', fontSize: 12 }}>
+                          {canManageReservations(user) && (
+                            <input type="checkbox" checked={locked} onChange={() => toggleRoomLock(r.id)}
+                              title="Cerrada — no se puede mover a otros huéspedes aquí"
+                              style={{ margin: 0, cursor: 'pointer' }} />
+                          )}
+                          <span style={{ textDecoration: locked ? 'line-through' : 'none', color: locked ? 'var(--text2)' : 'inherit' }}>
+                            {r.code}
+                          </span>
+                          {/* Un administrador (dirección) puede quitar habitaciones adicionales
+                              en cualquier estado — necesario para limpiar asignaciones erróneas
+                              (ej. las que generó el bug de sync FDM) en reservas ya cerradas.
+                              Recepción solo puede hacerlo mientras la reserva sigue activa. */}
+                          {(isAdmin || (!['checked_out','cancelled'].includes(res.status) && canManageReservations(user))) && (
+                            <button type="button" onClick={() => setRemoveExtraRoomModal({ roomId: r.id, code: r.code })}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', lineHeight: 1, padding: 0, fontSize: 11 }}>✕</button>
+                          )}
+                        </span>
+                      )
+                    })}
+                    {/* Dirección puede añadir habitación extra a cualquier reserva sin dar
+                        motivo (igual que siempre). Recepción también puede, para cualquier
+                        canal de reserva — pero el modal le exige una explicación de al
+                        menos 5 palabras (igual que quitar una extra o un cambio delicado),
+                        que comprueba también el backend. */}
+                    {!['checked_out','cancelled'].includes(res.status) && canManageReservations(user) && (
                       <button className="btn btn-ghost btn-xs" style={{ fontSize: 11, padding: '1px 6px' }}
                         onClick={() => setShowAddExtraRoom(true)}>+ Hab.</button>
                     )}
@@ -2115,10 +2234,16 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedAdditionalGuests.map((ag: any) => (
+                  {sortedAdditionalGuests.map((ag: any) => {
+                    // Habitación cerrada (ver toggleRoomLock) — el huésped que ya está
+                    // en ella queda fijo: ni se puede quitar de la reserva ni mover a
+                    // otra habitación, y nadie más puede ocupar la suya.
+                    const guestRoomLocked = ag.roomId != null && lockedRoomIds.includes(ag.roomId)
+                    return (
                     <tr key={ag.id}>
                       <td style={{ fontWeight: 500 }}>
                         {ag.firstName} {ag.lastName}{ag.secondLastName ? ' ' + ag.secondLastName : ''}
+                        {guestRoomLocked && <span title="Habitación cerrada" style={{ marginLeft: 4 }}>🔒</span>}
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--text2)' }}>
                         {ag.idDocType ? `${DOC_TYPE_LABEL[ag.idDocType] ?? ag.idDocType} ${ag.idDocNumber ?? ''}` : '—'}
@@ -2129,9 +2254,10 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
                       <td style={{ fontSize: 12, color: 'var(--text2)' }}>{ag.nationality ?? '—'}</td>
                       {isGroupReservation && (
                         <td>
-                          <select value={ag.roomId ?? ''} style={{ fontSize: 12 }}
+                          <select value={ag.roomId ?? ''} style={{ fontSize: 12 }} disabled={guestRoomLocked}
+                            title={guestRoomLocked ? 'Habitación cerrada — no se puede cambiar' : undefined}
                             onChange={e => moveAdditionalGuestRoom(ag.id, Number(e.target.value))}>
-                            {groupRooms.map((r: any) => (
+                            {groupRooms.filter((r: any) => !lockedRoomIds.includes(r.id) || r.id === ag.roomId).map((r: any) => (
                               <option key={r.id} value={r.id}>{r.code}</option>
                             ))}
                           </select>
@@ -2141,12 +2267,16 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
                             onClick={() => setEditingAdditional(ag)}>✎ Editar</button>
-                          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--red)' }}
-                            onClick={() => removeAdditionalGuest(ag.id)}>✕</button>
+                          <button className="btn btn-ghost btn-sm"
+                            disabled={guestRoomLocked}
+                            title={guestRoomLocked ? 'Habitación cerrada — no se puede quitar a este huésped' : undefined}
+                            style={guestRoomLocked ? { fontSize: 11, opacity: 0.4, cursor: 'not-allowed' } : { fontSize: 11, color: 'var(--red)' }}
+                            onClick={guestRoomLocked ? undefined : () => removeAdditionalGuest(ag.id)}>✕</button>
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             )}
@@ -2756,7 +2886,7 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
       {showAddGuest && (
         <AddGuestModal
           reservationId={res.id}
-          groupRooms={groupRooms}
+          groupRooms={groupRooms.filter((r: any) => !lockedRoomIds.includes(r.id))}
           titularAddress={{
             address1:           g.address1           ?? '',
             zipCode:            g.zipCode            ?? '',
@@ -2806,6 +2936,12 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
           onConfirm={async (reason) => { await removeExtraRoom(removeExtraRoomModal.roomId, reason); setRemoveExtraRoomModal(null) }}
         />
       )}
+      {showCancelModal && (
+        <CancelReservationModal
+          onClose={() => setShowCancelModal(false)}
+          onConfirm={async (reason) => { await doCancelWithReason(reason); setShowCancelModal(false) }}
+        />
+      )}
       {editingAdditional && (
         <EditGuestModal
           guest={editingAdditional}
@@ -2845,6 +2981,7 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
       {showAddExtraRoom && (
         <AddExtraRoomModal
           res={res}
+          isAdmin={isAdmin}
           onClose={() => setShowAddExtraRoom(false)}
           onAdded={(newExtraRoomIds) => {
             setShowAddExtraRoom(false)
@@ -2861,14 +2998,19 @@ function ReservationDetailContent({ resId, onClose }: { resId: string; onClose?:
 
 // ─── Modal: editar datos de factura ──────────────────────────────────────────
 
+type InvoiceLineItem = { description: string; quantity: number; unitPrice: number }
+
 export function EditInvoiceModal({ invoice, onClose, onSaved }: {
   invoice: any
   onClose: () => void
   onSaved: (updated: any) => void
 }) {
   const { user } = useAuth()
+  const { currency } = useProperty()
+  const admin = canManage(user)
   const [form, setForm] = useState({
     invoiceNumber:  invoice.invoiceNumber  ?? '',
+    issuedAt:       invoice.issuedAt       ?? '',
     billingName:    invoice.billingName    ?? '',
     billingNif:     invoice.billingNif     ?? '',
     billingAddress: invoice.billingAddress ?? '',
@@ -2876,8 +3018,24 @@ export function EditInvoiceModal({ invoice, onClose, onSaved }: {
     total:          invoice.total          ?? '',
   })
   const [saving, setSaving] = useState(false)
+  const [editingItems, setEditingItems] = useState(false)
+  const initItems = (): InvoiceLineItem[] => {
+    const stored = invoice.lineItems
+    if (Array.isArray(stored) && stored.length > 0) return stored
+    return [{ description: '', quantity: 1, unitPrice: parseFloat(invoice.total ?? '0') }]
+  }
+  const [lineItems, setLineItems] = useState<InvoiceLineItem[]>(initItems)
+
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
+
+  const itemsTotal = lineItems.reduce((s, i) => s + (i.quantity || 0) * (i.unitPrice || 0), 0)
+
+  const setItem = (idx: number, field: keyof InvoiceLineItem, value: string | number) =>
+    setLineItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: value } : it))
+
+  const addItem = () => setLineItems(prev => [...prev, { description: '', quantity: 1, unitPrice: 0 }])
+  const removeItem = (idx: number) => setLineItems(prev => prev.filter((_, i) => i !== idx))
 
   const save = async () => {
     if (!form.invoiceNumber.trim()) { toast('El número de factura no puede estar vacío', 'err'); return }
@@ -2889,12 +3047,20 @@ export function EditInvoiceModal({ invoice, onClose, onSaved }: {
         billingAddress: form.billingAddress || null,
         notes:          form.notes          || null,
       }
-      if (canManage(user) && form.invoiceNumber !== invoice.invoiceNumber) {
+      if (admin && form.invoiceNumber !== invoice.invoiceNumber) {
         body.invoiceNumber = form.invoiceNumber.trim()
       }
-      const newTotal = parseFloat(form.total)
-      if (canManage(user) && !isNaN(newTotal) && newTotal > 0 && String(newTotal) !== invoice.total) {
-        body.total = newTotal
+      if (admin && form.issuedAt && form.issuedAt !== invoice.issuedAt) {
+        body.issuedAt = form.issuedAt
+      }
+      if (admin && editingItems) {
+        const validItems = lineItems.filter(i => i.description.trim() && i.quantity > 0 && i.unitPrice >= 0)
+        body.lineItems = validItems.length > 0 ? validItems : null
+      } else {
+        const newTotal = parseFloat(form.total)
+        if (admin && !isNaN(newTotal) && newTotal > 0 && String(newTotal) !== invoice.total) {
+          body.total = newTotal
+        }
       }
       const r = await fetch(`/api/financial/invoices/${invoice.id}`, {
         method: 'PATCH',
@@ -2909,19 +3075,34 @@ export function EditInvoiceModal({ invoice, onClose, onSaved }: {
     } catch (e: any) { toast(e.message, 'err'); setSaving(false) }
   }
 
+  const inputSt: React.CSSProperties = { padding: '5px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text1)', fontSize: 13, outline: 'none', width: '100%' }
+
   return (
     <Modal title={`Editar factura ${invoice.invoiceNumber}`} onClose={onClose}>
       <div className="form-grid">
-        {canManage(user) && (
+        {admin && (
           <div className="form-group full">
             <label>Número de factura</label>
             <input value={form.invoiceNumber} onChange={set('invoiceNumber')} placeholder="0000001/2026" />
           </div>
         )}
-        {canManage(user) && (
+        {admin && (
+          <div className="form-group">
+            <label>Fecha de emisión</label>
+            <input type="date" value={form.issuedAt} onChange={set('issuedAt')} />
+          </div>
+        )}
+        {admin && !editingItems && (
           <div className="form-group">
             <label>Total factura</label>
             <input type="number" step="0.01" min="0.01" value={form.total} onChange={set('total')} placeholder={invoice.total} />
+          </div>
+        )}
+        {admin && editingItems && (
+          <div className="form-group">
+            <label>Total (calculado)</label>
+            <input type="number" value={itemsTotal.toFixed(2)} readOnly
+              style={{ ...inputSt, background: 'var(--bg2)', color: 'var(--text2)', cursor: 'default' }} />
           </div>
         )}
         <div className="form-group full">
@@ -2941,6 +3122,86 @@ export function EditInvoiceModal({ invoice, onClose, onSaved }: {
           <textarea value={form.notes} onChange={set('notes')} rows={3} placeholder="Observaciones que aparecerán en la factura…" style={{ resize: 'vertical' }} />
         </div>
       </div>
+
+      {/* ── Conceptos (solo admin) ── */}
+      {admin && (
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: editingItems ? 12 : 0 }}>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>
+              Conceptos de la factura
+              {!editingItems && invoice.lineItems && Array.isArray(invoice.lineItems) && invoice.lineItems.length > 0 && (
+                <span style={{ marginLeft: 6, fontWeight: 400, color: 'var(--text2)', fontSize: 12 }}>
+                  ({invoice.lineItems.length} concepto{invoice.lineItems.length > 1 ? 's' : ''})
+                </span>
+              )}
+            </span>
+            <button type="button" className="btn btn-ghost btn-sm"
+              onClick={() => { setEditingItems(v => !v); if (!editingItems) setLineItems(initItems()) }}>
+              {editingItems ? '✕ Cancelar edición' : 'Editar conceptos'}
+            </button>
+          </div>
+
+          {editingItems && (
+            <div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg2)' }}>
+                      <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>Descripción</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right', width: 70, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>Cant.</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right', width: 100, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>P. unit.</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right', width: 90, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>Total</th>
+                      <th style={{ padding: '6px 8px', width: 32, borderBottom: '1px solid var(--border)' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineItems.map((item, idx) => (
+                      <tr key={idx}>
+                        <td style={{ padding: '4px 8px 4px 0', borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
+                          <input style={inputSt} value={item.description}
+                            placeholder="Ej: Alojamiento 3 noches…"
+                            onChange={e => setItem(idx, 'description', e.target.value)} />
+                        </td>
+                        <td style={{ padding: '4px 4px', borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
+                          <input style={{ ...inputSt, textAlign: 'right' }} type="number" min="0.01" step="0.01"
+                            value={item.quantity}
+                            onChange={e => setItem(idx, 'quantity', parseFloat(e.target.value) || 0)} />
+                        </td>
+                        <td style={{ padding: '4px 4px', borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
+                          <input style={{ ...inputSt, textAlign: 'right' }} type="number" min="0" step="0.01"
+                            value={item.unitPrice}
+                            onChange={e => setItem(idx, 'unitPrice', parseFloat(e.target.value) || 0)} />
+                        </td>
+                        <td style={{ padding: '4px 8px', borderBottom: '1px solid var(--border-subtle, var(--border))', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--text2)' }}>
+                          {fmtMoney((item.quantity || 0) * (item.unitPrice || 0), currency)}
+                        </td>
+                        <td style={{ padding: '4px 0 4px 4px', borderBottom: '1px solid var(--border-subtle, var(--border))' }}>
+                          <button type="button" onClick={() => removeItem(idx)}
+                            disabled={lineItems.length <= 1}
+                            style={{ background: 'none', border: 'none', cursor: lineItems.length <= 1 ? 'default' : 'pointer', color: lineItems.length <= 1 ? 'var(--text3)' : 'var(--red, #ef4444)', fontSize: 16, padding: '0 4px', lineHeight: 1 }}>
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan={3} style={{ padding: '8px 8px 4px 0', textAlign: 'right', fontWeight: 600, fontSize: 13 }}>Total:</td>
+                      <td style={{ padding: '8px 8px 4px', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(itemsTotal, currency)}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addItem} style={{ marginTop: 8 }}>
+                + Añadir línea
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="modal-footer">
         <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
         <button className="btn btn-primary" onClick={save} disabled={saving}>
@@ -3046,7 +3307,10 @@ function EditGuestModal({ guest, reservation, onClose, onSaved }: {
     if (!form.email && !form.phone)                                                          m.push('email o teléfono')
     if (!form.idDocType)                                                                     m.push('tipo de documento')
     if (!form.idDocNumber)                                                                   m.push('nº de documento')
-    if ((form.idDocType === 'dni' || form.idDocType === 'nie') && !form.idDocSupportNumber) m.push('nº soporte')
+    if (form.idDocType === 'dni' || form.idDocType === 'nie') {
+      if (!form.idDocSupportNumber) m.push('nº soporte')
+      else if (!/^[A-Z]{3}[0-9]{6}$/.test(form.idDocSupportNumber)) m.push('nº soporte inválido (3 letras + 6 dígitos)')
+    }
     if (!form.nationality)                                                                   m.push('nacionalidad')
     if (!form.address1)                                                                      m.push('dirección')
     if (!form.zipCode)                                                                       m.push('código postal')
@@ -3533,8 +3797,15 @@ function AddNoteModal({ reservationId, onClose, onSaved }: { reservationId: numb
 
 // ─── Modal: pago ──────────────────────────────────────────────────────────────
 
-function AddPaymentModal({ reservationId, accounts, due, onClose, onSaved }:
+function AddPaymentModal({ reservationId, accounts: allAccounts, due, onClose, onSaved }:
   { reservationId: number; accounts: any[]; due: number; onClose: () => void; onSaved: () => void }) {
+  // Las cajas de depósitos no son para cobrar pagos de la reserva aquí —
+  // tienen su propio flujo (AddDepositModal / CobrarDepositModal, que ya
+  // excluye lo mismo), así que no deben aparecer como caja seleccionable
+  // al registrar un pago normal.
+  const accounts = allAccounts.filter((a: any) =>
+    !a.name.toLowerCase().includes('depósito') && !a.name.toLowerCase().includes('deposito')
+  )
   const [amount,    setAmount]    = useState('')
   const [method,    setMethod]    = useState('')
   const [methods,   setMethods]   = useState<any[]>([])
@@ -3941,14 +4212,27 @@ function AddDepositModal({ reservationId, accounts, onClose, onSaved }:
 
   const def = DEPOSIT_TYPES.find(t => t.value === type)!
 
+  // Preautorización y Tarjeta son depósitos de CC — la caja de Depósitos Cash
+  // no debe poder elegirse ahí, solo para Efectivo (y viceversa).
+  const availableAccounts = type === 'cash'
+    ? depositAccounts.filter((a: any) => !a.name.toLowerCase().includes('cc'))
+    : depositAccounts.filter((a: any) => a.name.toLowerCase().includes('cc'))
+
   const handleTypeChange = (newType: 'preauth' | 'cash' | 'card') => {
     setType(newType)
-    // Auto-seleccionar cuenta según tipo
-    if (newType === 'cash' && cashAccount) setAccountId(String(cashAccount.id))
-    else if ((newType === 'preauth' || newType === 'card') && ccAccount) setAccountId(String(ccAccount.id))
+    // Auto-seleccionar cuenta según tipo — con fallback por si no hay cuenta
+    // "cc"/"cash" reconocible por nombre, para no dejar seleccionada una cuenta
+    // que el nuevo tipo ya no permite.
+    const nextAccounts = newType === 'cash'
+      ? depositAccounts.filter((a: any) => !a.name.toLowerCase().includes('cc'))
+      : depositAccounts.filter((a: any) => a.name.toLowerCase().includes('cc'))
+    const preferred = newType === 'cash' ? cashAccount : ccAccount
+    setAccountId(String(preferred?.id ?? nextAccounts[0]?.id ?? ''))
   }
 
   const save = async () => {
+    // Depósitos en efectivo deshabilitados por Dirección — no se registran.
+    if (type === 'cash') { toast('Depósitos en efectivo deshabilitados — comunícate con Dirección', 'err'); return }
     if (def.needsAmount && (!amount || parseFloat(amount) <= 0)) { toast('Importe inválido', 'err'); return }
     if (!accountId) { toast('Selecciona una cuenta', 'err'); return }
     setSaving(true)
@@ -3993,7 +4277,7 @@ function AddDepositModal({ reservationId, accounts, onClose, onSaved }:
         <div className="form-group full">
           <label>Cuenta</label>
           <select value={accountId} onChange={e => setAccountId(e.target.value)}>
-            {depositAccounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {availableAccounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </div>
         <div className="form-group full">
@@ -4625,6 +4909,36 @@ function RemoveExtraRoomModal({ roomCode, onClose, onConfirm }: { roomCode: stri
   )
 }
 
+// Cancelación por recepción: motivo obligatorio de al menos 10 palabras
+// reales (el backend lo exige igual — ver POST /:id/cancel). Admin/dirección
+// no pasa por aquí, cancela directo con el confirm() de siempre.
+const MIN_CANCEL_REASON_WORDS = 10
+
+function CancelReservationModal({ onClose, onConfirm }: { onClose: () => void; onConfirm: (reason: string) => Promise<void> }) {
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const words = countReasonWords(reason)
+  const ok    = words >= MIN_CANCEL_REASON_WORDS
+
+  const confirm = async () => { setSaving(true); await onConfirm(reason); setSaving(false) }
+
+  return (
+    <Modal title="Cancelar reserva" onClose={onClose} footer={
+      <><button className="btn btn-ghost" onClick={onClose}>Cerrar</button>
+        <button className="btn btn-red" onClick={confirm} disabled={saving || !ok}>Cancelar reserva</button></>
+    }>
+      <div className="form-group" style={{ marginBottom: 0 }}>
+        <label>Motivo de la cancelación — obligatorio</label>
+        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} autoFocus
+          placeholder="Explica por qué se cancela esta reserva…" />
+        <div style={{ fontSize: 11, color: ok ? 'var(--green)' : 'var(--text2)', marginTop: 2 }}>
+          {words}/{MIN_CANCEL_REASON_WORDS} palabras{ok ? ' ✓' : ''}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ─── Modal: cambiar habitación ────────────────────────────────────────────────
 
 function ChangeRoomModal({ res, onClose, onMoved }: { res: any; onClose: () => void; onMoved: () => void }) {
@@ -4897,12 +5211,19 @@ function SplitReservationModal({ res, onClose, onSplit }: { res: any; onClose: (
 
 // ─── Modal: añadir habitación adicional ──────────────────────────────────────
 
-function AddExtraRoomModal({ res, onClose, onAdded }: { res: any; onClose: () => void; onAdded: (newExtraRoomIds: number[]) => void }) {
+function AddExtraRoomModal({ res, isAdmin, onClose, onAdded }: { res: any; isAdmin: boolean; onClose: () => void; onAdded: (newExtraRoomIds: number[]) => void }) {
   const currentExtraIds: number[] = res.extraRoomIds ?? []
   const [availRooms, setAvailRooms] = useState<any[]>([])
   const [loading,    setLoading]    = useState(true)
   const [roomId,     setRoomId]     = useState('')
+  const [reason,     setReason]     = useState('')
   const [saving,     setSaving]     = useState(false)
+  // Dirección no necesita motivo (igual que siempre). Recepción sí — misma
+  // explicación mínima de 5 palabras que quitar una extra o un cambio
+  // delicado de habitación, comprobada también en el backend.
+  const words   = countReasonWords(reason)
+  const needsReason = !isAdmin
+  const reasonOk     = !needsReason || words >= MIN_REASON_WORDS
 
   useEffect(() => {
     api.availableRoomsForReservation({
@@ -4919,11 +5240,11 @@ function AddExtraRoomModal({ res, onClose, onAdded }: { res: any; onClose: () =>
   const selectedRoom = availRooms.find((r: any) => r.id === Number(roomId))
 
   const save = async () => {
-    if (!roomId) return
+    if (!roomId || !reasonOk) return
     setSaving(true)
     try {
       const newExtraRoomIds = [...currentExtraIds, Number(roomId)]
-      await api.updateReservation(res.id, { extraRoomIds: newExtraRoomIds } as any)
+      await api.updateReservation(res.id, { extraRoomIds: newExtraRoomIds, ...(needsReason ? { changeReason: reason } : {}) } as any)
       toast('Habitación adicional añadida')
       onAdded(newExtraRoomIds)
     } catch (e: any) { toast(e.message, 'err'); setSaving(false) }
@@ -4932,7 +5253,7 @@ function AddExtraRoomModal({ res, onClose, onAdded }: { res: any; onClose: () =>
   return (
     <Modal title="Añadir habitación adicional" onClose={onClose} footer={
       <><button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving || !roomId}>Añadir</button></>
+        <button className="btn btn-primary" onClick={save} disabled={saving || !roomId || !reasonOk}>Añadir</button></>
     }>
       {loading ? (
         <p style={{ fontSize: 13, color: 'var(--text2)' }}>Cargando habitaciones disponibles…</p>
@@ -4951,6 +5272,16 @@ function AddExtraRoomModal({ res, onClose, onAdded }: { res: any; onClose: () =>
             <p style={{ fontSize: 12, color: 'var(--text2)', margin: '6px 0 0' }}>
               Capacidad de esta habitación: {selectedRoom.roomType.maxOccupancy} persona{selectedRoom.roomType.maxOccupancy !== 1 ? 's' : ''}
             </p>
+          )}
+          {needsReason && (
+            <div className="form-group" style={{ marginTop: 10, marginBottom: 0 }}>
+              <label>Motivo — obligatorio</label>
+              <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
+                placeholder="Explica por qué se añade esta habitación…" />
+              <div style={{ fontSize: 11, color: reasonOk ? 'var(--green)' : 'var(--text2)', marginTop: 2 }}>
+                {words}/{MIN_REASON_WORDS} palabras{reasonOk ? ' ✓' : ''}
+              </div>
+            </div>
           )}
         </div>
       )}

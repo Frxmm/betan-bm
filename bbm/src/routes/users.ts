@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { db } from '../db'
 import { users, userRoles } from '../db/schema'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, inArray, sql } from 'drizzle-orm'
 import { notFound, serverError } from '../lib/errors'
 import { isAdmin } from '../middleware/auth'
 import { getPropertyId } from '../lib/property'
@@ -149,6 +149,25 @@ app.post('/:id/send-password-reset', async (c) => {
       return c.json({ error: 'Ya se envió un correo de recuperación a este usuario hace poco — espera unos minutos antes de volver a enviarlo' }, 429)
     }
     await sendPasswordResetLink(user)
+    return c.json({ ok: true })
+  } catch (err) { return serverError(c, err) }
+})
+
+// POST /api/users/:id/force-logout — cierra la sesión activa de este usuario
+// al instante, sin esperar a que caduque el token (hasta 7 días) ni depender
+// de que vuelva a hacer login. Incrementa session_version — requireAuth
+// compara esa columna contra la del JWT en cada petición (ver
+// src/middleware/auth.ts); al no coincidir, el token ya emitido deja de
+// valer de inmediato.
+app.post('/:id/force-logout', async (c) => {
+  try {
+    if (!isAdmin(c)) return c.json({ error: 'Sin permisos' }, 403)
+    const id = Number(c.req.param('id'))
+    const [updated] = await db.update(users)
+      .set({ sessionVersion: sql`${users.sessionVersion} + 1`, updatedAt: new Date() })
+      .where(and(eq(users.id, id), eq(users.propertyId, getPropertyId())))
+      .returning()
+    if (!updated) return notFound(c, 'Usuario')
     return c.json({ ok: true })
   } catch (err) { return serverError(c, err) }
 })

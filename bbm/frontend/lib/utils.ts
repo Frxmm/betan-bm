@@ -64,6 +64,13 @@ export function addDays(iso: string, n: number) {
   return d.toISOString().slice(0, 10)
 }
 
+export function relativeDate(iso?: string | null) {
+  if (!iso) return '—'
+  if (iso === today()) return 'Hoy'
+  if (iso === addDays(today(), 1)) return 'Mañana'
+  return fmtDate(iso)
+}
+
 export function getDays(from: string, to: string) {
   const days: string[] = []
   const cur = new Date(from + 'T12:00:00')

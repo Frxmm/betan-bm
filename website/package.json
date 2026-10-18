@@ -1,0 +1,15 @@
+{
+  "name": "betanbm-web",
+  "private": true,
+  "description": "Web comercial de Betan (www.betanbm.com): estáticos + backend Bun/Hono",
+  "scripts": {
+    "dev": "cd server && bun run dev",
+    "test": "cd server && NODE_ENV=test bun test",
+    "sitemap": "cd server && bun run sitemap",
+    "pdf": "cd server && bun run pdf",
+    "deploy": "bash deploy/deploy.sh",
+    "deploy:dry": "bash deploy/deploy.sh -n",
+    "deploy:test": "bash deploy/deploy-local.sh",
+    "deploy:check": "bash deploy/deploy-local.sh --check"
+  }
+}

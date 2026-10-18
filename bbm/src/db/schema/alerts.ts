@@ -36,6 +36,13 @@ export const alertEvents = pgTable('alert_events', {
   // resolvedAt: la condición dejó de cumplirse sola (automáticas) o se marcó
   // resuelta a mano (p.ej. "Comunicarse con Dirección" tras atenderla).
   resolvedAt:    timestamp('resolved_at', { withTimezone: true }),
+  // resolvedBy: solo cuando se resuelve con una acción explícita identificable
+  // (botón "Hecho" en una alerta manual, "no-show-confirm"...) — null cuando se
+  // resuelve sola (la condición dejó de cumplirse, p.ej. alguien pagó) porque
+  // ahí no hay una persona concreta a la que atribuírselo. Usado por el
+  // resumen de fin de turno (src/lib/shiftEndReport.ts) para dar +1 por cada
+  // alerta roja resuelta que no sea "suya" (createdBy distinto de quien la resolvió).
+  resolvedBy:    integer('resolved_by').references(() => users.id),
   silencedAt:    timestamp('silenced_at', { withTimezone: true }),
   silencedBy:    integer('silenced_by').references(() => users.id),
   // createdBy: solo en las creadas a mano desde la vista Alertas — null en las

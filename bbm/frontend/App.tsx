@@ -22,6 +22,7 @@ import UsersView             from './views/UsersView'
 import SettingsView, { applyPrefs } from './views/SettingsView'
 import ReportsView           from './views/ReportsView'
 import HousekeepingView      from './views/HousekeepingView'
+import LiveMapView           from './views/LiveMapView'
 import NobedsSyncView        from './views/NobedsSyncView'
 import SesView               from './views/SesView'
 import AiDebugView           from './views/AiDebugView'
@@ -88,6 +89,7 @@ function AppRoutes() {
           <Route path="settings"         element={<SettingsView />} />
           <Route path="reports"          element={<Access allow={notLimpieza}><ReportsView /></Access>} />
           <Route path="housekeeping"     element={<HousekeepingView />} />
+          <Route path="live-map"         element={<LiveMapView />} />
           <Route path="nobeds"           element={<Access allow={onlyDireccion}><NobedsSyncView /></Access>} />
           <Route path="ses"              element={<Access allow={recepcionODireccion}><SesView /></Access>} />
           <Route path="id-scan"          element={<Access allow={recepcionODireccion}><IdScanView /></Access>} />

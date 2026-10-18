@@ -5,7 +5,7 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import { api } from '../lib/api'
-import { addDays, getDays, fmtMoney } from '../lib/utils'
+import { addDays, getDays, fmtMoney, fmtDateTime } from '../lib/utils'
 import { StatusChip } from '../components/Badge'
 import { useAuth, canManage } from '../contexts/AuthContext'
 
@@ -668,7 +668,7 @@ function CajaTab() {
               <div className="table-wrap">
                 <table className="data-table">
                   <thead><tr>
-                    <th>Fecha</th><th>Método</th><th>Caja</th><th>Reserva</th><th>Huésped</th><th style={{textAlign:'right'}}>Importe</th>
+                    <th>Fecha</th><th>Método</th><th>Caja</th><th>Nº de pedido</th><th>Reserva</th><th>Huésped</th><th>Cobrado en otro turno</th><th style={{textAlign:'right'}}>Importe</th>
                   </tr></thead>
                   <tbody>
                     {txs.map((t: any) => (
@@ -681,11 +681,21 @@ function CajaTab() {
                           </span>
                         </td>
                         <td style={{ fontSize:12 }}>{t.financialAccount?.name ?? '—'}</td>
+                        <td style={{ fontSize:12, color:'var(--text2)', fontFamily:'monospace', whiteSpace:'nowrap' }}>
+                          {t.cardOperationNumber ?? '—'}
+                        </td>
                         <td style={{ fontFamily:'monospace', fontSize:12, color:'var(--text2)' }}>
                           {t.reservation?.externalCode ?? (t.reservationId ? `#${t.reservationId}` : '—')}
                         </td>
                         <td style={{ fontSize:13 }}>
                           {t.reservation?.guest ? `${t.reservation.guest.firstName} ${t.reservation.guest.lastName}` : '—'}
+                        </td>
+                        <td style={{ fontSize:12, color:'var(--text2)', whiteSpace:'nowrap' }}>
+                          {t.paidByUser
+                            ? <span title={t.collectedAt ? fmtDateTime(t.collectedAt) : undefined}>
+                                Sí — {t.paidByUser.firstName} {t.paidByUser.lastName}{t.collectedAt ? ` (${fmtDateTime(t.collectedAt)})` : ''}
+                              </span>
+                            : '—'}
                         </td>
                         <td style={{ textAlign:'right', fontWeight:600 }}>{fmtMoney(parseFloat(t.amount))}</td>
                       </tr>

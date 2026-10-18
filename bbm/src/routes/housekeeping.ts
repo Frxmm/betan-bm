@@ -79,11 +79,16 @@ app.get('/', zValidator('query', z.object({ date: z.string().date().optional() }
     const extraRoomIds = new Set<number>()
     const stolenByRoom     = new Map<number, boolean>()
     const checkedOutByRoom = new Map<number, boolean>()
+    // Nº de personas alojadas por habitación — para el mapa en vivo (Tiempo Real).
+    // Viene de reservations.people, no de reservation_nights (que puede no tener
+    // fila para el acompañante si no tiene huésped nombrado todavía).
+    const peopleByRoom = new Map<number, number>()
     for (const r of occupied) {
       const type: 'stay' | 'departure' = r.checkOutDate === date ? 'departure' : 'stay'
       if (type === 'stay' && r.status !== 'checked_in') continue
       if (r.room) {
         addToMap(r.roomId!, (r.room as any).code, type)
+        peopleByRoom.set(r.roomId!, r.people)
         if (type === 'departure') {
           stolenByRoom.set(r.roomId!, !!(r as any).stolenItemsReportedAt)
           checkedOutByRoom.set(r.roomId!, r.status === 'checked_out')
@@ -103,6 +108,7 @@ app.get('/', zValidator('query', z.object({ date: z.string().date().optional() }
           const code = extraCodeMap.get(xid)
           if (code) {
             addToMap(xid, code, type)
+            peopleByRoom.set(xid, r.people)
             if (type === 'departure') {
               stolenByRoom.set(xid, !!(r as any).stolenItemsReportedAt)
               checkedOutByRoom.set(xid, r.status === 'checked_out')
@@ -169,6 +175,7 @@ app.get('/', zValidator('query', z.object({ date: z.string().date().optional() }
         ...t, roomCode: roomCodeMap[t.roomId] ?? '?',
         stolenItemsReported: stolenByRoom.get(t.roomId) ?? false,
         checkedOut:          checkedOutByRoom.get(t.roomId) ?? false,
+        people:              peopleByRoom.get(t.roomId) ?? null,
       }))
       .sort((a, b) => (a.roomCode ?? '').localeCompare(b.roomCode ?? '', 'es', { numeric: true }))
 
@@ -348,7 +355,11 @@ export const COMMON_AREAS: { key: string; label: string; isBathroom: boolean }[]
   { key: 'reception',           label: 'Recepción',                       isBathroom: false },
   { key: 'dining_room',         label: 'Comedor',                         isBathroom: false },
   { key: 'lounge_floor2',       label: 'Salón Planta 2',                  isBathroom: false },
-  { key: 'hallways',            label: 'Pasillos',                        isBathroom: false },
+  { key: 'hallways_floor1',     label: 'Pasillos Planta 1',               isBathroom: false },
+  { key: 'hallways_floor2',     label: 'Pasillos Planta 2',               isBathroom: false },
+  { key: 'hallways_floor3',     label: 'Pasillos Planta 3',               isBathroom: false },
+  { key: 'hallways_floor4',     label: 'Pasillos Planta 4',               isBathroom: false },
+  { key: 'hallways_floor5',     label: 'Pasillos Planta 5',               isBathroom: false },
   { key: 'stairs_elevator_low', label: 'Escalera y Ascensor Bajo',        isBathroom: false },
   { key: 'elevator_high',       label: 'Ascensor Alto',                   isBathroom: false },
 ]

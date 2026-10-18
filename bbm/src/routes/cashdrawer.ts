@@ -57,7 +57,7 @@ function totalFromCounts(counts: Record<string, number>): number {
 // debería estar resuelto (lo exige el check-out), y si quedó suelto de antes
 // de tener esa comprobación no debe seguir contando aquí.
 async function getActiveCashDeposits(): Promise<Array<{
-  id: number; amount: string; transactionDate: string; guestName: string; roomCode: string | null; reservationId: number
+  id: number; amount: string; transactionDate: string; guestName: string; roomCode: string | null; reservationId: number; checkOutDate: string
 }>> {
   const pid = getPropertyId()
   const rows = await db.execute(sql`
@@ -71,7 +71,7 @@ async function getActiveCashDeposits(): Promise<Array<{
       SELECT (substring(description from 5))::int AS id
       FROM cash_dep WHERE category = 'deposit_return' AND description LIKE 'dep:%'
     )
-    SELECT cd.id, cd.amount, cd.transaction_date, cd.reservation_id,
+    SELECT cd.id, cd.amount, cd.transaction_date, cd.reservation_id, r.check_out_date,
            COALESCE(g.first_name || ' ' || g.last_name, '—') AS guest_name,
            rm.code AS room_code
     FROM cash_dep cd
@@ -81,10 +81,10 @@ async function getActiveCashDeposits(): Promise<Array<{
     WHERE cd.category NOT IN ('deposit_return', 'deposit_cobrado')
       AND cd.id NOT IN (SELECT id FROM returned)
     ORDER BY cd.transaction_date DESC, cd.id DESC
-  `) as unknown as Array<{ id: number; amount: string; transaction_date: string; reservation_id: number; guest_name: string; room_code: string | null }>
+  `) as unknown as Array<{ id: number; amount: string; transaction_date: string; reservation_id: number; check_out_date: string; guest_name: string; room_code: string | null }>
   return rows.map(r => ({
     id: r.id, amount: r.amount, transactionDate: r.transaction_date,
-    reservationId: r.reservation_id, guestName: r.guest_name, roomCode: r.room_code,
+    reservationId: r.reservation_id, checkOutDate: r.check_out_date, guestName: r.guest_name, roomCode: r.room_code,
   }))
 }
 

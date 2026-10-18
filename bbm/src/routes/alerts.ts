@@ -13,6 +13,9 @@ import { realPaidByReservation, pendingBalance as calcPendingBalance } from '../
 import { isConfigured as zktecoConfigured, getEvents as getZktecoEvents } from '../lib/zkteco'
 import { getPropertyId, getBranding, hasFeature, getSetting, type FeatureKey } from '../lib/property'
 import { currencySymbol } from '../lib/paymentAggregate'
+import { propertyMs, addDaysIso } from '../lib/dates'
+import { matchUserByName } from '../lib/externalStaffActivity'
+import { computeShiftEndReport, shiftCommentary } from '../lib/shiftEndReport'
 
 const app = new Hono()
 
@@ -57,6 +60,20 @@ app.get('/urgent', async (c) => {
       // elementos dentro, en vez de una línea por elemento (usado para no
       // saturar la barra cuando hay varias incidencias a la vez).
       items?: { label: string; reservationId?: number }[]
+      // Cuándo se vio esta ocurrencia por primera vez (alert_events.first_seen_at)
+      // — el frontend la usa para la escalada de las urgentes. Se rellena más
+      // abajo, al registrar el historial; las de severidad 'info' no la llevan.
+      firstSeenAt?: string
+      // escalate: false si ha empezado un turno nuevo (según /api/turnos de
+      // sistema de piscina) desde que se vio esta alerta por primera vez
+      // — en ese caso el frontend la muestra como alerta normal, sin parpadeo
+      // ni interrupción bloqueante, porque no es justo cargárselo a quien no
+      // la causó. true (o ausente) = escala con normalidad. Se rellena más abajo.
+      escalate?: boolean
+      // shiftEndSummary: solo en la alerta de resumen de fin de turno — el
+      // frontend la detecta por este campo y la muestra como un modal que se
+      // superpone a lo que el empleado esté haciendo, en vez de la barra normal.
+      shiftEndSummary?: { total: number; emoji: string; comment: string }
     }[] = []
 
     const pid  = getPropertyId()
@@ -93,6 +110,116 @@ app.get('/urgent', async (c) => {
     const roles = !isNaN(uid) && uid > 0
       ? (await db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, uid))).map(r => r.role as string)
       : []
+
+    // Turnos del personal (sistema de piscina/mantenimiento /api/turnos) — para saber
+    // si una alerta urgente sigue dentro del mismo turno en el que empezó, o
+    // si ha habido cambio de turno mientras tanto (deja de escalar, ver
+    // shiftChangedSince más abajo). Se piden de hoy y de ayer (por si una
+    // alerta lleva abierta desde antes de medianoche) con una sola llamada de
+    // solo lectura, igual que el resto de datos de esa app (inventario,
+    // incidencias...). Si la API no está configurada o falla, no se bloquea
+    // nada — simplemente no se puede desactivar la escalada por turno.
+    const shiftStarts: Date[] = []
+    // turnosToday: además de los inicios (shiftStarts, arriba), guarda cada
+    // turno completo (nombre + inicio + fin) — lo usa el resumen de fin de
+    // turno más abajo para encontrar CUÁNDO acaba el turno del usuario que
+    // está haciendo esta petición ahora mismo.
+    const turnosToday: { empleadoNombre: string; start: Date; end: Date | null }[] = []
+    if (await poolControl.isConfigured()) {
+      try {
+        const yesterdayISO = new Intl.DateTimeFormat('en-CA', { timeZone: tz })
+          .format(new Date(now.getTime() - 86400000))
+        const todayLocalISO = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(now)
+        const res: any = await poolControl.getShifts(yesterdayISO, todayLocalISO)
+        for (const t of (res?.items ?? [])) {
+          const fecha = String(t?.fecha ?? '').slice(0, 10)
+          const hi    = String(t?.hora_inicio ?? '')
+          const hf    = String(t?.hora_fin ?? '')
+          const mi    = hi.match(/^(\d{2}):(\d{2})/)
+          const mf    = hf.match(/^(\d{2}):(\d{2})/)
+          if (!fecha || !mi) continue
+          const start = new Date(await propertyMs(fecha, Number(mi[1]), Number(mi[2])))
+          shiftStarts.push(start)
+          // Turno que cruza medianoche (p.ej. 15:30 → 00:15): si la hora de
+          // fin es <= la de inicio, es del día siguiente al de `fecha` — si
+          // no, la conversión calculaba un "fin" varias horas ANTES del inicio,
+          // dejando el rango vacío y por eso el resumen salía siempre a cero
+          // (check-ins, check-outs, extras... todas sus consultas filtran
+          // entre start y end, y con end < start no hay filas que puedan caer
+          // dentro nunca).
+          let end: Date | null = null
+          if (mf) {
+            const crossesMidnight = (Number(mf[1]) * 60 + Number(mf[2])) <= (Number(mi[1]) * 60 + Number(mi[2]))
+            const endFecha = crossesMidnight ? addDaysIso(fecha, 1) : fecha
+            end = new Date(await propertyMs(endFecha, Number(mf[1]), Number(mf[2])))
+          }
+          turnosToday.push({ empleadoNombre: String(t?.empleado_nombre ?? ''), start, end })
+        }
+      } catch (e) {
+        console.error('[alerts/urgent] fallo leyendo turnos del módulo de piscina', e)
+      }
+    }
+    function shiftChangedSince(firstSeenAt: Date | undefined): boolean {
+      if (!firstSeenAt) return false
+      return shiftStarts.some(s => s > firstSeenAt && s <= now)
+    }
+
+    // ── Resumen de fin de turno (recepción) ───────────────────────────────────
+    // ~15 min antes de que acabe el turno del usuario que hace esta petición,
+    // se calcula su desempeño (check-ins, check-outs, depósitos, alertas,
+    // carritos, extras — ver src/lib/shiftEndReport.ts) y se guarda en
+    // shift_end_reports, UNA sola vez por turno (UNIQUE user_id+shift_start):
+    // el propio INSERT sirve de dedup, así que no hace falta nada más para
+    // que no se repita en el siguiente poll. Queda ahí para siempre — así
+    // Dirección lo puede ver en Implicación, no solo como aviso puntual.
+    if (roles.includes('recepcion') && !isNaN(uid) && uid > 0 && turnosToday.length > 0) {
+      try {
+        const me = await db.query.users.findFirst({
+          where: eq(users.id, uid),
+          columns: { firstName: true, lastName: true },
+        })
+        if (me) {
+          const myName  = `${me.firstName} ${me.lastName}`
+          const myShift = turnosToday.find(t =>
+            t.end
+            && matchUserByName(t.empleadoNombre, [{ id: uid, name: myName }]) === uid
+            && now >= new Date(t.end.getTime() - 15 * 60_000)
+            && now <= t.end,
+          )
+          if (myShift?.end) {
+            // Los Date se pasan como ISO string explícito, no tal cual — un
+            // objeto Date directo en una plantilla sql de Drizzle revienta
+            // con INVALID_ARG_TYPE (confirmado al depurar por qué nunca se
+            // generaba ni guardaba ningún resumen: este INSERT fallaba en
+            // silencio cada vez, atrapado por el catch de abajo).
+            const shiftStartIso = myShift.start.toISOString()
+            const shiftEndIso   = myShift.end.toISOString()
+            const existing = await db.execute(sql`
+              SELECT id FROM shift_end_reports WHERE property_id = ${pid} AND user_id = ${uid} AND shift_start = ${shiftStartIso}
+            `) as unknown as any[]
+            if (existing.length === 0) {
+              const breakdown = await computeShiftEndReport(uid, myShift.start, myShift.end)
+              const shiftDate = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(myShift.start)
+              await db.execute(sql`
+                INSERT INTO shift_end_reports (property_id, user_id, shift_date, shift_start, shift_end, total_points, breakdown)
+                VALUES (${pid}, ${uid}, ${shiftDate}, ${shiftStartIso}, ${shiftEndIso}, ${breakdown.total}, ${JSON.stringify(breakdown)}::jsonb)
+                ON CONFLICT (user_id, shift_start) DO NOTHING
+              `)
+              const { emoji, text } = shiftCommentary(breakdown.total)
+              alerts.push({
+                id:       `shift-end-report-${uid}-${myShift.start.getTime()}`,
+                message:  `${emoji} Resumen de tu turno: ${breakdown.total >= 0 ? '+' : ''}${breakdown.total} puntos de implicación — ${text} Lo tienes disponible en la pestaña de Implicación.`,
+                severity: 'info',
+                doneAction: { label: 'Ver en Implicación', navigateTo: '/engagement' },
+                shiftEndSummary: { total: breakdown.total, emoji, comment: text },
+              })
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[alerts/urgent] fallo generando resumen de fin de turno', e)
+      }
+    }
 
     // ── Limpieza sin asignar después de las 12:00 — SOLO para rol limpieza ───
     if (hour >= 12 && alertEnabled('hk-unassigned')) {
@@ -167,6 +294,48 @@ app.get('/urgent', async (c) => {
             message:       `Reserva sin cobrar — Hab. ${hab} (${name || '—'}) · ${dueStr} ${cur} pendientes`,
             reservationId: r.id,
           })
+        }
+      }
+    }
+
+    // ── Reservas ampliadas (estancia alargada) que se quedan sin cobrar ─────
+    // La marca "🛏️ Ampliación" la deja PATCH /api/reservations/:id en una
+    // nota de tipo 'change' cada vez que se alarga la fecha de salida (ver
+    // src/routes/reservations.ts) — aquí basta con mirar si esa reserva
+    // sigue con saldo pendiente AHORA, se recalcula en cada poll igual que
+    // unpaid-reservation, así que desaparece sola en cuanto se cobra.
+    if (alertEnabled('extension-unpaid')) {
+      const extendedRows = await db.selectDistinct({ id: reservationNotes.reservationId })
+        .from(reservationNotes)
+        .innerJoin(reservations, eq(reservations.id, reservationNotes.reservationId))
+        .where(and(eq(reservations.propertyId, pid), eq(reservationNotes.type, 'change'), sql`${reservationNotes.note} LIKE '%🛏️ Ampliación%'`))
+
+      if (extendedRows.length > 0) {
+        const extended = await db.query.reservations.findMany({
+          where: and(
+            eq(reservations.propertyId, pid),
+            inArray(reservations.id, extendedRows.map(r => r.id)),
+            not(inArray(reservations.status, ['cancelled', 'no_show'])),
+          ),
+          with: {
+            room:  { columns: { code: true } },
+            guest: { columns: { firstName: true, lastName: true } },
+          },
+        })
+        const realPaidByExtId = await realPaidByReservation(extended.map(r => r.id))
+        for (const r of extended) {
+          const due = calcPendingBalance(r.total, realPaidByExtId.get(r.id) ?? 0)
+          if (due > 0.10) {
+            const hab  = r.room?.code ?? '?'
+            const g    = r.guest
+            const name = g ? `${g.firstName ?? ''} ${g.lastName ?? ''}`.trim() : '—'
+            const dueStr = due.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            alerts.push({
+              id:            `extension-unpaid-${r.id}`,
+              message:       `🛏️ Hab. ${hab} (${name || '—'}) ampliada y sin cobrar · ${dueStr} ${cur} pendientes — cóbralo antes de ampliar más, y mientras tanto pon una nota bloqueando la habitación`,
+              reservationId: r.id,
+            })
+          }
         }
       }
     }
@@ -287,7 +456,13 @@ app.get('/urgent', async (c) => {
           },
           columns: { id: true, externalCode: true, checkInDate: true, total: true, originalTotal: true, bmCommission: true },
         })
-        const relevant = candidates.filter(r => ((r.bookingChannel as any)?.name ?? '').toLowerCase().includes('booking'))
+        const candidatesRelevantEarly = candidates.filter(r => ((r.bookingChannel as any)?.name ?? '').toLowerCase().includes('booking'))
+
+        // Mismo criterio que el aviso de abajo (no-show-booking): si la
+        // reserva ya está totalmente saldada no hay urgencia ni comisión que
+        // forzar a marcar a mano, no debería seguir avisando.
+        const realPaidByIdEarly = await realPaidByReservation(candidatesRelevantEarly.map(r => r.id))
+        const relevant = candidatesRelevantEarly.filter(r => calcPendingBalance(r.total, realPaidByIdEarly.get(r.id) ?? 0) > 0.10)
 
         for (const r of relevant) {
           const g    = (r.guest as any)
@@ -302,8 +477,9 @@ app.get('/urgent', async (c) => {
           const commStr  = comm > 0 ? ` — se pierden ${comm.toFixed(2)} ${cur} de comisión si no se marca` : ''
           alerts.push({
             id:            `booking-no-checkin-${r.id}`,
-            message:       `🔴 Reserva ${code} (${name || '—'}) sin check-in — marcar No-show en Booking${commStr} (llegada ${r.checkInDate})`,
+            message:       `⚠️ Reserva ${code} (${name || '—'}) sin check-in — marcar No-show en Booking${commStr} (llegada ${r.checkInDate})`,
             reservationId: r.id,
+            severity:      'warning',
           })
         }
       }
@@ -331,10 +507,10 @@ app.get('/urgent', async (c) => {
           bookingChannel: { columns: { name: true } },
           room:           { with: { roomType: { columns: { isVirtual: true } } } },
         },
-        columns: { id: true, externalCode: true, checkInDate: true, status: true },
+        columns: { id: true, externalCode: true, checkInDate: true, status: true, total: true },
       })
 
-      const relevant = candidates.filter(r => {
+      const candidatesRelevant = candidates.filter(r => {
         const isBookingCom = ((r.bookingChannel as any)?.name ?? '').toLowerCase().includes('booking')
         if (!isBookingCom) return false
         const isNoShow          = r.status === 'no_show'
@@ -342,6 +518,12 @@ app.get('/urgent', async (c) => {
           && !['checked_in', 'checking_out', 'checked_out', 'cancelled'].includes(r.status)
         return isNoShow || isVirtualNoCheckin
       })
+
+      // Solo avisa si la reserva no está totalmente saldada — si ya está
+      // cobrada del todo no hay urgencia (ni comisión ni cargo) que forzar
+      // a marcar a mano en booking.com.
+      const realPaidById = await realPaidByReservation(candidatesRelevant.map(r => r.id))
+      const relevant = candidatesRelevant.filter(r => calcPendingBalance(r.total, realPaidById.get(r.id) ?? 0) > 0.10)
 
       if (relevant.length > 0) {
         const confirmedRows = await db.query.reservationNotes.findMany({
@@ -360,8 +542,9 @@ app.get('/urgent', async (c) => {
           const code = r.externalCode ?? `#${r.id}`
           alerts.push({
             id:      `no-show-booking-${r.id}`,
-            message: `🔴 Reserva ${code} (${name}) de Booking marcar No Show en booking.com — check-in ${r.checkInDate}`,
+            message: `⚠️ Reserva ${code} (${name}) de Booking marcar No Show en booking.com — check-in ${r.checkInDate}`,
             reservationId: r.id,
+            severity: 'warning',
             doneAction: { label: 'Hecho', confirmEndpoint: `/api/alerts/no-show-confirm/${r.id}` },
           })
         }
@@ -396,8 +579,8 @@ app.get('/urgent', async (c) => {
     const madridMinute = parseInt(new Intl.DateTimeFormat('es-ES', { timeZone: tz, minute: 'numeric' }).format(now), 10)
     const minuteOfDay  = madridHour * 60 + madridMinute
 
-    // ── Procesado de lavandería sin declarar (16:30–19:00) ────────────────────
-    if (minuteOfDay >= 16 * 60 + 30 && minuteOfDay < 19 * 60 && alertEnabled('laundry-process-missing')) {
+    // ── Procesado de lavandería sin declarar (16:30–19:00) — SOLO limpieza ───
+    if (minuteOfDay >= 16 * 60 + 30 && minuteOfDay < 19 * 60 && alertEnabled('laundry-process-missing') && roles.includes('limpieza')) {
       const todayMadrid = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(now)
       const [batchRow] = await db.select({ n: count() }).from(laundryProcessBatches)
         .where(and(eq(laundryProcessBatches.propertyId, pid), eq(laundryProcessBatches.date, todayMadrid)))
@@ -571,13 +754,13 @@ app.get('/urgent', async (c) => {
       }
     }
 
-    // ── Inventario de desayunos desactualizado ───────────────────────────────
+    // ── Inventario de desayunos desactualizado — SOLO para rol limpieza ──────
     // Se dispara si han pasado más de 4 días desde el último inventario
     // registrado en el sistema de piscina/mantenimiento, o si desde esa fecha
     // se han servido más de 25 desayunos (suma de personas en breakfast_logs,
     // tarifa + extras) — en ambos casos el inventario ya no refleja bien el
     // consumo real y toca repetirlo.
-    if (alertEnabled('breakfast-inventory-stale') && (await poolControl.isConfigured())) {
+    if (alertEnabled('breakfast-inventory-stale') && (await poolControl.isConfigured()) && roles.includes('limpieza')) {
       try {
         const inv      = await poolControl.getBreakfastInventory()
         const lastDate = inv?.fecha as string | null
@@ -1019,26 +1202,29 @@ app.get('/urgent', async (c) => {
       }
     }
 
-    // ── Quejas de huéspedes sin resolver (>24 h) ────────────────────────────────
-    // Hilos de feedback (feedback_threads) calificados como queja que llevan más
-    // de 24 h abiertos o en curso. Para el responsable asignado y dirección.
+    // ── Quejas de huéspedes recientes (primeras 24 h) ───────────────────────────
+    // Hilos de feedback (feedback_threads) calificados como queja, abiertos o
+    // en curso — solo durante las primeras 24 h desde que se recibieron; pasado
+    // ese plazo la alerta caduca sola (no se queda años avisando de una queja
+    // olvidada, para eso está la pestaña de feedback). Para el responsable
+    // asignado y dirección.
     if (alertEnabled('feedback-complaint-open') && (isAdmin(c) || roles.includes('recepcion') || roles.includes('direccion'))) {
       try {
         const cutoff = new Date(Date.now() - 24 * 3_600_000)
-        const stale = await db.select({ id: feedbackThreads.id, category: feedbackThreads.category, text: feedbackThreads.text, createdAt: feedbackThreads.createdAt })
+        const recent = await db.select({ id: feedbackThreads.id, category: feedbackThreads.category, text: feedbackThreads.text, createdAt: feedbackThreads.createdAt })
           .from(feedbackThreads)
-          .where(and(eq(feedbackThreads.propertyId, pid), eq(feedbackThreads.sentiment, 'complaint'), inArray(feedbackThreads.status, ['open', 'in_progress']), lte(feedbackThreads.createdAt, cutoff)))
+          .where(and(eq(feedbackThreads.propertyId, pid), eq(feedbackThreads.sentiment, 'complaint'), inArray(feedbackThreads.status, ['open', 'in_progress']), gte(feedbackThreads.createdAt, cutoff)))
           .orderBy(feedbackThreads.createdAt).limit(20)
-        if (stale.length > 0) {
+        if (recent.length > 0) {
           alerts.push({
             id: 'feedback-complaint-open',
-            message: `🗣 ${stale.length} queja${stale.length === 1 ? '' : 's'} de huéspedes sin resolver desde hace más de 24 h`,
+            message: `🗣 ${recent.length} queja${recent.length === 1 ? '' : 's'} de huéspedes en las últimas 24 h`,
             severity: 'warning',
-            items: stale.map(t => ({ label: `#${t.id} [${t.category}] ${t.text.slice(0, 120)}` })),
+            items: recent.map(t => ({ label: `#${t.id} [${t.category}] ${t.text.slice(0, 120)}` })),
           })
         }
       } catch (e) {
-        console.error('[alerts/urgent] fallo comprobando quejas abiertas', e)
+        console.error('[alerts/urgent] fallo comprobando quejas recientes', e)
       }
     }
 
@@ -1174,22 +1360,39 @@ app.get('/urgent', async (c) => {
       const openRows = await db.select().from(alertEvents).where(and(eq(alertEvents.propertyId, pid), isNull(alertEvents.resolvedAt)))
       const openByKey = new Map(openRows.map(r => [r.entityKey, r]))
 
+      // firstSeenAt/escalate por alerta — el frontend usa firstSeenAt para la
+      // escalada de las urgentes (parpadeo a los 5 min, interrupción cada 10
+      // min sin resolver), y escalate para desactivarla si ha empezado un
+      // turno nuevo (shiftChangedSince) desde que se vio por primera vez.
+      const firstSeenByKey = new Map<string, Date>()
+      const escalateByKey  = new Map<string, boolean>()
+
       for (const a of trackableAlerts) {
         const existing = openByKey.get(a.id)
         if (existing) {
           await db.update(alertEvents)
             .set({ lastSeenAt: new Date(), message: a.message })
             .where(and(eq(alertEvents.id, existing.id), eq(alertEvents.propertyId, pid)))
+          firstSeenByKey.set(a.id, existing.firstSeenAt)
+          escalateByKey.set(a.id, !shiftChangedSince(existing.firstSeenAt))
         } else {
-          await db.insert(alertEvents).values({
+          const [created] = await db.insert(alertEvents).values({
             propertyId: pid,
             alertType:  a.id.replace(/-\d+$/, '').replace(/-group$/, ''),
             entityKey:  a.id,
             message:    a.message,
             severity:   a.severity ?? 'urgent',
             reservationId: a.reservationId,
-          })
+          }).returning()
+          if (created) firstSeenByKey.set(a.id, created.firstSeenAt)
+          escalateByKey.set(a.id, true)  // recién creada, no ha podido haber cambio de turno todavía
         }
+      }
+      for (const a of alerts) {
+        const firstSeenAt = firstSeenByKey.get(a.id)
+        if (firstSeenAt) a.firstSeenAt = firstSeenAt.toISOString()
+        const escalate = escalateByKey.get(a.id)
+        if (escalate !== undefined) a.escalate = escalate
       }
       // Auto-resolver: automáticas (createdBy null) que ya no salen en vivo.
       for (const row of openRows) {
@@ -1212,6 +1415,8 @@ app.get('/urgent', async (c) => {
           message: r.message,
           severity: (r.severity as any) ?? 'urgent',
           doneAction: { label: 'Hecho', confirmEndpoint: `/api/alerts/manual/${r.id}/resolve` },
+          firstSeenAt: r.firstSeenAt.toISOString(),
+          escalate: !shiftChangedSince(r.firstSeenAt),
         })
       }
     } catch (e) {
@@ -1261,7 +1466,7 @@ app.post('/manual/:id/resolve', async (c) => {
     if (!uid) return c.json({ error: 'Sin permisos' }, 403)
     const id = Number(c.req.param('id'))
     const [updated] = await db.update(alertEvents)
-      .set({ resolvedAt: new Date() })
+      .set({ resolvedAt: new Date(), resolvedBy: uid })
       .where(and(eq(alertEvents.id, id), eq(alertEvents.propertyId, getPropertyId()), isNull(alertEvents.resolvedAt)))
       .returning()
     if (!updated) return c.json({ error: 'Alerta no encontrada o ya resuelta' }, 404)
@@ -1429,7 +1634,8 @@ app.post('/seen', zValidator('json', z.object({
 // partir de ahora — no hay que borrar nada más, la nota ES la marca.
 app.post('/no-show-confirm/:id', async (c) => {
   try {
-    const id = Number(c.req.param('id'))
+    const id  = Number(c.req.param('id'))
+    const uid = getUserId(c)
     if (!id) return c.json({ error: 'Reserva inválida' }, 400)
 
     const res = await db.query.reservations.findFirst({ where: and(eq(reservations.id, id), eq(reservations.propertyId, getPropertyId())), columns: { id: true } })
@@ -1437,10 +1643,16 @@ app.post('/no-show-confirm/:id', async (c) => {
 
     await db.insert(reservationNotes).values({
       reservationId: id,
-      authorId:      getUserId(c) ?? null,
+      authorId:      uid ?? null,
       note:          'No Show marcado manualmente en booking.com',
       type:          'no_show_ota_confirmed',
     })
+    // Marca quién la resolvió (urgente, "no es suya" — la causa Booking, no
+    // recepción) — la nota de arriba ya hace que deje de salir en vivo; esto
+    // solo es para poder atribuir el +1 del resumen de fin de turno.
+    await db.update(alertEvents)
+      .set({ resolvedAt: new Date(), resolvedBy: uid })
+      .where(and(eq(alertEvents.propertyId, getPropertyId()), eq(alertEvents.entityKey, `no-show-booking-${id}`), isNull(alertEvents.resolvedAt)))
     return c.json({ ok: true })
   } catch (err) {
     console.error('[alerts/no-show-confirm]', err)

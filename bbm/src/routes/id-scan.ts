@@ -25,7 +25,15 @@ import { checkBlockedGuestNames } from './guests'
 import { tenantCurrencyId } from './reservations'
 import { getPropertyId, getBranding, hasFeature } from '../lib/property'
 
+import type { Context } from 'hono'
+
 const app = new Hono()
+
+function getUserId(c: Context): number | undefined {
+  const payload = c.get('jwtPayload') as { sub?: string | number } | undefined
+  const id = Number(payload?.sub)
+  return isNaN(id) || id === 0 ? undefined : id
+}
 
 // Hoy en la zona horaria del tenant
 async function todayLocal(): Promise<string> {
@@ -47,6 +55,42 @@ async function loadEligibleReservation(id: number) {
   }
   return { reservation: res }
 }
+
+// GET /api/id-scan/done-today — huéspedes cuyo escaneo se guardó hoy, con
+// hora y empleado que lo hizo — lista "Ya realizados" de la pantalla
+// principal, aparte de la lista de llegadas pendientes.
+app.get('/done-today', async (c) => {
+  try {
+    if (!canManageReservations(c)) return c.json({ error: 'Sin permisos' }, 403)
+    const today = await todayLocal()
+    const tz    = (await getBranding()).timezone
+    const pid   = getPropertyId()
+
+    const rows = await db.execute(sql`
+      WITH scanned AS (
+        SELECT g.id AS guest_id, g.first_name, g.last_name, g.id_doc_scanned_at, g.id_doc_scanned_by,
+               COALESCE(
+                 (SELECT r.id FROM reservations r WHERE r.guest_id = g.id AND r.property_id = ${pid} AND r.check_in_date = ${today}::date LIMIT 1),
+                 (SELECT r.id FROM reservation_nights rn JOIN reservations r ON r.id = rn.reservation_id
+                  WHERE rn.guest_id = g.id AND r.property_id = ${pid} AND r.check_in_date = ${today}::date LIMIT 1)
+               ) AS reservation_id
+        FROM guests g
+        WHERE g.property_id = ${pid} AND g.id_doc_scanned_at IS NOT NULL
+          AND (g.id_doc_scanned_at AT TIME ZONE ${tz})::date = ${today}::date
+      )
+      SELECT s.guest_id, s.first_name, s.last_name, s.id_doc_scanned_at AS scanned_at,
+             u.first_name AS emp_first_name, u.last_name AS emp_last_name,
+             s.reservation_id, ro.code AS room_code
+      FROM scanned s
+      LEFT JOIN users u        ON u.id = s.id_doc_scanned_by AND u.property_id = ${pid}
+      LEFT JOIN reservations r ON r.id = s.reservation_id AND r.property_id = ${pid}
+      LEFT JOIN rooms ro       ON ro.id = r.room_id
+      ORDER BY s.id_doc_scanned_at DESC
+    `)
+
+    return c.json({ data: rows })
+  } catch (err) { return serverError(c, err) }
+})
 
 // GET /api/id-scan/:id/slots — titular + huéspedes adicionales ya cargados,
 // y cuántos huecos quedan por rellenar (reservation.people es el total).
@@ -201,6 +245,9 @@ app.post('/:id/apply', zValidator('json', applySchema), async (c) => {
     const blockedMsg = await checkBlockedGuestNames(cleanFields)
     if (blockedMsg) return c.json({ error: blockedMsg }, 422)
 
+    const userId = getUserId(c)
+    const scanMeta = { idDocScannedAt: new Date(), idDocScannedBy: userId ?? null }
+
     if (guestId != null) {
       // Debe ser un huésped que YA pertenezca a esta reserva (titular o
       // adicional) — no cualquier guestId del sistema.
@@ -209,7 +256,7 @@ app.post('/:id/apply', zValidator('json', applySchema), async (c) => {
       }))
       if (!belongsToReservation) return c.json({ error: 'Ese huésped no pertenece a esta reserva' }, 400)
 
-      const [updated] = await db.update(guests).set({ ...cleanFields, updatedAt: new Date() }).where(and(eq(guests.id, guestId), eq(guests.propertyId, getPropertyId()))).returning()
+      const [updated] = await db.update(guests).set({ ...cleanFields, ...scanMeta, updatedAt: new Date() }).where(and(eq(guests.id, guestId), eq(guests.propertyId, getPropertyId()))).returning()
       if (!updated) return notFound(c, 'Huésped')
       return c.json({ data: updated })
     }
@@ -219,7 +266,7 @@ app.post('/:id/apply', zValidator('json', applySchema), async (c) => {
     if (!cleanFields.firstName || !cleanFields.lastName) {
       return c.json({ error: 'Faltan nombre y apellido para crear el huésped' }, 400)
     }
-    const inserted = await db.insert(guests).values({ ...(cleanFields as any), propertyId: getPropertyId() }).returning({ id: guests.id })
+    const inserted = await db.insert(guests).values({ ...(cleanFields as any), ...scanMeta, propertyId: getPropertyId() }).returning({ id: guests.id })
     const newGuestId = inserted[0]!.id
 
     const room = reservation.room as any

@@ -302,6 +302,17 @@ nav .nav-section {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
   50%      { box-shadow: 0 0 0 4px rgba(239,68,68,0); }
 }
+/* Indicador de "escuchando Betan" — esquina distinta a la del badge de no
+   leídos (pueden darse los dos a la vez) y pulso tranquilo, no de alerta. */
+.af-badge-wake {
+  top: auto; bottom: -2px; right: -2px;
+  width: 9px; height: 9px; background: #6366f1;
+  animation: af-pulse-wake 2.4s ease-in-out infinite;
+}
+@keyframes af-pulse-wake {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,.5); }
+  50%      { box-shadow: 0 0 0 4px rgba(99,102,241,0); }
+}
 
 .af-panel {
   position: absolute; top: calc(100% + 10px); right: 0;
@@ -673,6 +684,17 @@ tbody tr { cursor: pointer; }
   justify-content: flex-end;
 }
 
+/* Spinner genérico (ver DailyReceptionReminderPopup.tsx) */
+@keyframes spin-loader { to { transform: rotate(360deg); } }
+.daily-reminder-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin-loader .7s linear infinite;
+}
+
 /* ─── FORM ─────────────────────────────────────────────────────────────────── */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .form-grid .full { grid-column: 1 / -1; }
@@ -741,6 +763,18 @@ tbody tr { cursor: pointer; }
   display: flex;
   flex-direction: column;
   height: calc(100vh - 52px - 48px); /* 52=topbar, 48=padding top+bottom de #content */
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Tiempo Real (LiveMapView): mismo criterio que .planning-page — ocupa todo
+   el alto disponible sin que la página entera haga scroll; el plano en sí
+   se reescala a mano (ver boxSize/scale en el componente) para caber entero
+   sin scroll lateral ni vertical tampoco dentro de su propia tarjeta. */
+.live-map-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 52px - 48px);
   min-height: 0;
   overflow: hidden;
 }
@@ -2027,7 +2061,16 @@ tbody tr { cursor: pointer; }
 
   /* En móvil el planning-page usa todo el alto disponible */
   .planning-page { height: calc(100vh - 52px - 24px); }
+  .live-map-page { height: calc(100vh - 52px - 24px); }
   .gantt-scroll { height: auto; }
+
+  /* Tiempo Real en móvil: plano arriba (la mayoría del alto) y la leyenda
+     debajo en una franja con su propio scroll interno, en vez de al lado
+     con 260px fijos — si no, en pantalla estrecha el plano quedaría
+     aplastado contra la leyenda. */
+  .live-map-row { flex-direction: column !important; }
+  .live-map-row > .card:first-child { flex: 1 1 auto !important; min-height: 0 !important; }
+  .live-map-row > aside.card { flex: 0 0 140px !important; min-width: 0 !important; overflow: auto !important; }
 
   /* Ocultar la sección de tarifas en el banner de ocupación */
   .occ-rates { display: none !important; }
